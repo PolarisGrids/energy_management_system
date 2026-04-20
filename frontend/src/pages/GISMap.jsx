@@ -595,18 +595,10 @@ export default function GISMap() {
               )
             })}
 
-            {/* Hierarchy drill-down panel (overlay inside the map container) */}
-            <HierarchyPanel
-              currentNode={tree?.node}
-              stats={tree?.stats ?? {}}
-              children={tree?.children ?? []}
-              commands={tree?.commands ?? []}
-              breadcrumb={breadcrumb}
-              onDrill={handleDrill}
-              onBreadcrumbClick={handleBreadcrumbClick}
-              onReset={handleResetHierarchy}
-              onCommand={handleHierarchyCommand}
-            />
+            {/* Hierarchy drill-down panel moved OUT of MapContainer (rendered
+                below as a sibling overlay) — react-leaflet 4+ rejects non-leaflet
+                children that don't use useMap(), and a plain div crashes the
+                whole map render. */}
 
             {/* DER assets (always-on overlay) */}
             <LayerGroup>
@@ -628,6 +620,18 @@ export default function GISMap() {
             </LayerGroup>
           </MapContainer>
         )}
+        {/* Hierarchy drill-down panel — sibling overlay over the map div. */}
+        <HierarchyPanel
+          currentNode={tree?.node}
+          stats={tree?.stats ?? {}}
+          children={tree?.children ?? []}
+          commands={tree?.commands ?? []}
+          breadcrumb={breadcrumb}
+          onDrill={handleDrill}
+          onBreadcrumbClick={handleBreadcrumbClick}
+          onReset={handleResetHierarchy}
+          onCommand={handleHierarchyCommand}
+        />
       </div>
 
       <div className="glass-card p-3 flex flex-wrap gap-5 items-center">
