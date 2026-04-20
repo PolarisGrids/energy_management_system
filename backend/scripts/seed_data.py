@@ -1444,8 +1444,26 @@ def _refresh_simulation_scenarios(db):
     /simulation page — safe to delete+recreate on every pod start so the
     richer per-step `network_state` payloads flow without a DB wipe.
     """
-    # Keep any running alarms tied to scenarios by nulling the FK first —
-    # cascade-delete of steps + scenarios is safe, but alarms are history.
+    feeders = db.query(Feeder).order_by(Feeder.id).all()
+    transformers = db.query(Transformer).order_by(Transformer.id).all()
+    if not feeders or not transformers:
+        print("  Skipping scenario refresh — network not seeded.")
+        return
+    # Microgrid-typed DERs aren't always seeded in older dev DBs — fall back
+    # to any DER on a feeder as the FK target so the scenario still seeds.
+    pv = db.query(DERAsset).filter(DERAsset.asset_type == DERType.PV).first()
+    ev = db.query(DERAsset).filter(DERAsset.asset_type == DERType.EV_CHARGER).first()
+    mg = (
+        db.query(DERAsset).filter(DERAsset.asset_type == DERType.MICROGRID).first()
+        or db.query(DERAsset).filter(DERAsset.asset_type == DERType.BESS).first()
+        or pv
+    )
+    if not (pv and ev and mg):
+        print("  Skipping scenario refresh — required DER assets missing.")
+        return
+
+    # Only delete after prereq check so a failed lookup never empties the
+    # scenarios table.
     from app.models.alarm import Alarm
     db.query(Alarm).filter(Alarm.scenario_id.isnot(None)).update(
         {Alarm.scenario_id: None}, synchronize_session=False
@@ -1454,17 +1472,6 @@ def _refresh_simulation_scenarios(db):
     db.query(SimulationScenario).delete(synchronize_session=False)
     db.commit()
 
-    feeders = db.query(Feeder).order_by(Feeder.id).all()
-    transformers = db.query(Transformer).order_by(Transformer.id).all()
-    if not feeders or not transformers:
-        print("  Skipping scenario refresh — network not seeded.")
-        return
-    pv = db.query(DERAsset).filter(DERAsset.asset_type == DERType.PV).first()
-    ev = db.query(DERAsset).filter(DERAsset.asset_type == DERType.EV_CHARGER).first()
-    mg = db.query(DERAsset).filter(DERAsset.asset_type == DERType.MICROGRID).first()
-    if not (pv and ev and mg):
-        print("  Skipping scenario refresh — DER assets missing.")
-        return
     seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg)
     db.commit()
     print("  Scenario refresh complete.")
