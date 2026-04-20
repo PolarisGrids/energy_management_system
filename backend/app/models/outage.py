@@ -1,15 +1,21 @@
-"""Outage management models — spec 018 W3.
+"""Outage management models — spec 018 W3 + spec 016.
 
-Distinct from the spec-016 `outage_incidents` (plural) feeder-scoped table.
-These tables back the Wave-3 outage correlator, FLISR, and reliability
-indices workflows.
+Two coexisting outage record tables:
+* ``outage_incident`` (singular) — spec-018 W3 DTR-scoped model with PostGIS
+  fault geometry, timeline events, and FLISR actions. Class: ``OutageIncidentW3``.
+* ``outage_incidents`` (plural) — spec-016 feeder-scoped lifecycle record
+  used by the reliability calc and notification dispatcher. Class:
+  ``OutageIncident``.
 """
 from __future__ import annotations
+
+import enum
 
 from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
+    Enum,
     ForeignKey,
     Integer,
     JSON,
@@ -127,3 +133,53 @@ class OutageFlisrAction(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     incident = relationship("OutageIncidentW3", back_populates="flisr_actions")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spec-016 outage lifecycle — feeder-scoped, used by reliability_calc + dispatcher.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class OutageStatus(str, enum.Enum):
+    DETECTED = "DETECTED"
+    CONFIRMED = "CONFIRMED"
+    DISPATCHED = "DISPATCHED"
+    RESTORING = "RESTORING"
+    RESTORED = "RESTORED"
+    CLOSED = "CLOSED"
+    CANCELLED = "CANCELLED"
+
+
+class OutageIncident(Base):
+    """Spec-016 feeder-scoped outage incident. Table: ``outage_incidents``."""
+
+    __tablename__ = "outage_incidents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(
+        Enum(OutageStatus, name="outage_status", native_enum=False),
+        nullable=False,
+        default=OutageStatus.DETECTED,
+        index=True,
+    )
+    feeder_id = Column(Integer, ForeignKey("feeders.id"), nullable=False, index=True)
+    outage_area_id = Column(Integer, ForeignKey("outage_areas.id"), nullable=True)
+
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    dispatched_at = Column(DateTime(timezone=True), nullable=True)
+    restored_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    etr_at = Column(DateTime(timezone=True), nullable=True)
+
+    affected_customers = Column(Integer, default=0)
+    cause = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
