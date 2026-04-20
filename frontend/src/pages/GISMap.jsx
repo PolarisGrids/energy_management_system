@@ -197,9 +197,19 @@ export default function GISMap() {
         safeGet(() => derAPI.list()),
       ])
       if (cancelled) return
-      setFeederFC(feeder?.data ?? { features: [] })
-      setDtrFC(dtr?.data ?? { features: [] })
-      setMeterFC(meter?.data ?? { features: [] })
+      // Defensive: backend `/gis/layers/{layer}` is currently broken (Feeder
+      // model has no PostGIS `geom` column → 500). The frontend's
+      // `gisAPI.layer()` accidentally hits `/gis/layers` (no path) which
+      // returns the layer catalog, not a FeatureCollection — so `.features`
+      // is undefined and any downstream `.features.map()` blows up the whole
+      // page. Coerce any non-FC payload into an empty FC so the page renders.
+      const asFC = (payload) =>
+        payload && Array.isArray(payload.features)
+          ? payload
+          : { type: 'FeatureCollection', features: [] }
+      setFeederFC(asFC(feeder?.data))
+      setDtrFC(asFC(dtr?.data))
+      setMeterFC(asFC(meter?.data))
       setDers(dersResp?.data ?? [])
       setLoading(false)
     })()
