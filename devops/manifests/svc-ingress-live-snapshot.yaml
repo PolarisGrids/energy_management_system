@@ -1,0 +1,129 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      argocd.argoproj.io/tracking-id: polaris-ems-backend:/Service:polaris-ems/polaris-ems-backend
+    creationTimestamp: "2026-04-14T06:24:11Z"
+    labels:
+      app: polaris-ems-backend
+      app.kubernetes.io/instance: polaris-ems-backend
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: mdms
+      app.kubernetes.io/version: v1.0
+      helm.sh/chart: mdms-v1.0
+    name: polaris-ems-backend
+    namespace: polaris-ems
+    resourceVersion: "24206519"
+    uid: 7add5496-b251-4752-b13e-b403efcffb2c
+  spec:
+    clusterIP: fdab:2ef1:3b10::3:ec3a
+    clusterIPs:
+    - fdab:2ef1:3b10::3:ec3a
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv6
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 8000
+      protocol: TCP
+      targetPort: http
+    selector:
+      app.kubernetes.io/instance: polaris-ems-backend
+      app.kubernetes.io/name: mdms
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      argocd.argoproj.io/tracking-id: polaris-ems-frontend:/Service:polaris-ems/polaris-ems-frontend
+    creationTimestamp: "2026-04-09T09:28:13Z"
+    labels:
+      app.kubernetes.io/instance: polaris-ems-frontend
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: mdms
+      app.kubernetes.io/version: v1.0
+      helm.sh/chart: mdms-v1.0
+    name: polaris-ems-frontend
+    namespace: polaris-ems
+    resourceVersion: "24206198"
+    uid: 1de773b3-f9e7-406b-8a34-e23a6eb3522c
+  spec:
+    clusterIP: fdab:2ef1:3b10::c:452f
+    clusterIPs:
+    - fdab:2ef1:3b10::c:452f
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv6
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+    selector:
+      app.kubernetes.io/instance: polaris-ems-frontend
+      app.kubernetes.io/name: mdms
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    annotations:
+      alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:703623468956:certificate/7cd705fe-32ba-4c0f-9fde-d4bf7cae5e4b
+      alb.ingress.kubernetes.io/group.name: dev-private-application
+      alb.ingress.kubernetes.io/healthcheck-interval-seconds: "300"
+      alb.ingress.kubernetes.io/healthcheck-path: /
+      alb.ingress.kubernetes.io/ip-address-type: dualstack
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+      alb.ingress.kubernetes.io/scheme: internal
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/subnets: subnet-09deb64fdc5ed61ed,subnet-0c3de70f0cb9c6973
+      alb.ingress.kubernetes.io/success-codes: 200-399
+      alb.ingress.kubernetes.io/tags: map-migrated=mig70U3Z9VNAJ
+      alb.ingress.kubernetes.io/target-type: ip
+      external-dns.alpha.kubernetes.io/hostname: vidyut360.dev.polagram.in
+      external-dns.alpha.kubernetes.io/ttl: "300"
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"alb.ingress.kubernetes.io/certificate-arn":"arn:aws:acm:ap-south-1:703623468956:certificate/7cd705fe-32ba-4c0f-9fde-d4bf7cae5e4b","alb.ingress.kubernetes.io/group.name":"dev-private-application","alb.ingress.kubernetes.io/healthcheck-interval-seconds":"300","alb.ingress.kubernetes.io/healthcheck-path":"/","alb.ingress.kubernetes.io/ip-address-type":"dualstack","alb.ingress.kubernetes.io/listen-ports":"[{\"HTTP\": 80}, {\"HTTPS\": 443}]","alb.ingress.kubernetes.io/load-balancer-attributes":"idle_timeout.timeout_seconds=3600","alb.ingress.kubernetes.io/scheme":"internal","alb.ingress.kubernetes.io/ssl-redirect":"443","alb.ingress.kubernetes.io/subnets":"subnet-09deb64fdc5ed61ed,subnet-0c3de70f0cb9c6973","alb.ingress.kubernetes.io/success-codes":"200-399","alb.ingress.kubernetes.io/tags":"map-migrated=mig70U3Z9VNAJ","alb.ingress.kubernetes.io/target-type":"ip","external-dns.alpha.kubernetes.io/hostname":"vidyut360.dev.polagram.in","external-dns.alpha.kubernetes.io/ttl":"300"},"name":"polaris-ems","namespace":"polaris-ems"},"spec":{"ingressClassName":"alb","rules":[{"host":"vidyut360.dev.polagram.in","http":{"paths":[{"backend":{"service":{"name":"polaris-ems-frontend","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}}]}}
+    creationTimestamp: "2026-04-09T09:39:24Z"
+    finalizers:
+    - group.ingress.k8s.aws/dev-private-application
+    generation: 1
+    name: polaris-ems
+    namespace: polaris-ems
+    resourceVersion: "20748133"
+    uid: 092913e9-71aa-4120-9941-0d1894856ab3
+  spec:
+    ingressClassName: alb
+    rules:
+    - host: vidyut360.dev.polagram.in
+      http:
+        paths:
+        - backend:
+            service:
+              name: polaris-ems-frontend
+              port:
+                number: 80
+          path: /
+          pathType: Prefix
+  status:
+    loadBalancer:
+      ingress:
+      - hostname: internal-k8s-devprivateapplica-f61e8252c5-1027808743.ap-south-1.elb.amazonaws.com
+        ports:
+        - port: 80
+          protocol: ""
+        - port: 443
+          protocol: ""
+kind: List
+metadata:
+  resourceVersion: ""

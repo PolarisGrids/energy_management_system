@@ -1,0 +1,36 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+alembic==1.13.3
+psycopg2-binary==2.9.9
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
+python-multipart==0.0.12
+httpx==0.27.2
+faker==30.1.0
+numpy==2.1.2
+scipy==1.14.1
+geojson==3.1.0
+shapely==2.0.6
+sse-starlette==2.1.3
+python-dotenv==1.0.1
+# ── spec 018 Wave 1 additions ──
+boto3==1.35.55                 # SSM / Secrets Manager loader (W1.T2)
+pybreaker==1.2.0               # Circuit breaker for MDMS/HES clients (W1.T5/T6)
+redis==5.0.8                   # health probe + SSE fanout
+aiokafka==0.11.0               # /health probe + Wave 2 consumers
+# ── spec 018 Wave 2 additions ──
+prometheus-client==0.20.0      # consumer metrics (W2.T1)
+pytest==8.3.2                  # unit test runner (dev)
+pytest-asyncio==0.23.8         # async unit tests (dev)
+# ── spec 018 Wave 4 additions — notification providers (W4.T1) ──
+aiosmtplib==3.0.2              # async SMTP transport (W4.T1 Email)
+twilio==9.3.6                  # SMS provider (W4.T1 SMS)
+firebase-admin==6.5.0          # Firebase Cloud Messaging (W4.T1 Push)
+# ── spec 018 Wave 4 additions — AppBuilder + scheduled reports (W4.T6..T10) ──
+RestrictedPython==7.2          # AppBuilder Python algorithm sandbox (W4.T7)
+apscheduler==3.10.4            # Scheduled-report worker cron (W4.T10)
+reportlab==4.2.2               # PDF rendering for scheduled reports (W4.T10)

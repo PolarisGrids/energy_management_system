@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "16"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"polaris-ems-backend","namespace":"polaris-ems"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"polaris-ems-backend"}},"template":{"metadata":{"labels":{"app":"polaris-ems-backend"}},"spec":{"containers":[{"env":[{"name":"DATABASE_URL","value":"postgresql://postgres:Q90CNQv0JG6RNtf0@mdms.dev.polagram.in:5432/smoc_ems"},{"name":"SECRET_KEY","value":"smoc-eskom-demo-secret-key-2026-eXtremeLyS3cur3"},{"name":"DEBUG","value":"false"},{"name":"KAFKA_ENABLED","value":"false"},{"name":"HES_ENABLED","value":"false"},{"name":"MDMS_ENABLED","value":"false"},{"name":"SMTP_ENABLED","value":"false"},{"name":"TWILIO_ENABLED","value":"false"},{"name":"FIREBASE_ENABLED","value":"false"},{"name":"TEAMS_ENABLED","value":"false"}],"image":"703623468956.dkr.ecr.ap-south-1.amazonaws.com/dev/polaris-ems/backend:latest","name":"backend","ports":[{"containerPort":8000}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/health","port":8000},"initialDelaySeconds":15,"periodSeconds":10},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"250m","memory":"256Mi"}}}],"imagePullSecrets":[{"name":"ecr-secret"}],"nodeSelector":{"kubernetes.io/arch":"arm64"},"tolerations":[{"effect":"NoSchedule","key":"service","operator":"Equal","value":"MDMS"}]}}}}
+  creationTimestamp: "2026-04-09T09:28:13Z"
+  generation: 16
+  name: polaris-ems-backend
+  namespace: polaris-ems
+  resourceVersion: "26293792"
+  uid: fd80609f-904f-4f3f-82e1-3ff310f28e51
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: polaris-ems-backend
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-04-14T12:40:48Z"
+      labels:
+        app: polaris-ems-backend
+        app.kubernetes.io/instance: polaris-ems-backend
+        app.kubernetes.io/name: mdms
+    spec:
+      containers:
+      - env:
+        - name: DATABASE_URL
+          value: postgresql://postgres:Q90CNQv0JG6RNtf0@mdms.dev.polagram.in:5432/smoc_ems
+        - name: SECRET_KEY
+          value: smoc-eskom-demo-secret-key-2026-eXtremeLyS3cur3
+        - name: DEBUG
+          value: "false"
+        - name: KAFKA_ENABLED
+          value: "false"
+        - name: HES_ENABLED
+          value: "false"
+        - name: MDMS_ENABLED
+          value: "false"
+        - name: SMTP_ENABLED
+          value: "false"
+        - name: TWILIO_ENABLED
+          value: "false"
+        - name: FIREBASE_ENABLED
+          value: "false"
+        - name: TEAMS_ENABLED
+          value: "false"
+        image: 703623468956.dkr.ecr.ap-south-1.amazonaws.com/dev/polaris-ems/backend:phaseb-20260418-123226
+        imagePullPolicy: Always
+        name: backend
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 256Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+      - name: ecr-secret
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: service
+        operator: Equal
+        value: MDMS
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-04-14T06:37:35Z"
+    lastUpdateTime: "2026-04-14T06:37:35Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-04-13T15:18:36Z"
+    lastUpdateTime: "2026-04-18T07:02:56Z"
+    message: ReplicaSet "polaris-ems-backend-cd5dd7d9" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 16
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

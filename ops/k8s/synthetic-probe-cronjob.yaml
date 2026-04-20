@@ -1,0 +1,78 @@
+# Polaris EMS synthetic probe CronJob (spec 018, W5.T49)
+#
+# Runs every 5 minutes; each pod executes probe.py once and exits.
+# Metrics are delivered via OTLP gRPC to the OTel Collector DaemonSet and
+# surfaced in Grafana through the Prometheus datasource (see
+# ops/grafana/polaris-ems-probes.json).
+#
+# Secrets expected in the `polaris-ems` namespace:
+#   polaris-ems-probe-secret:
+#     PROBE_AUTH_TOKEN   # long-lived service JWT scoped to read-only routes
+#
+# ConfigMap `polaris-ems-probe-config` holds overridable PROBE_BASE_URL etc.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-ems-probe-config
+  namespace: polaris-ems
+data:
+  PROBE_BASE_URL: "https://vidyut360.dev.polagram.in"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+  DEPLOY_ENV: "dev"
+  PROBE_TIMEOUT_SECONDS: "10"
+  PROBE_TLS_VERIFY: "true"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: polaris-ems-synthetic-probe
+  namespace: polaris-ems
+  labels:
+    app.kubernetes.io/name: polaris-ems-synthetic-probe
+    app.kubernetes.io/part-of: polaris-ems
+    app.kubernetes.io/component: observability
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: polaris-ems-synthetic-probe
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: probe
+              image: "{{ .Values.image.registry }}/polaris-ems-synthetic-probe:{{ .Values.image.tag }}"
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: polaris-ems-probe-config
+                - secretRef:
+                    name: polaris-ems-probe-secret
+              resources:
+                requests:
+                  cpu: "25m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]

@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris-ems-backend
+  namespace: polaris-ems
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polaris-ems-backend
+  template:
+    metadata:
+      labels:
+        app: polaris-ems-backend
+    spec:
+      imagePullSecrets:
+        - name: ecr-secret
+      tolerations:
+        - key: "service"
+          operator: "Equal"
+          value: "MDMS"
+          effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: backend
+          image: 703623468956.dkr.ecr.ap-south-1.amazonaws.com/dev/polaris-ems/backend:latest
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:Q90CNQv0JG6RNtf0@mdms.dev.polagram.in:5432/smoc_ems"
+            - name: SECRET_KEY
+              value: "smoc-eskom-demo-secret-key-2026-eXtremeLyS3cur3"
+            - name: DEBUG
+              value: "false"
+            # --- Spec 018 environment selector + SSOT mode -----------------
+            - name: DEPLOY_ENV
+              value: "dev"
+            - name: SSOT_MODE
+              value: "mirror"
+            # --- Upstream integrations (HES + MDMS) -------------------------
+            - name: HES_ENABLED
+              value: "true"
+            - name: HES_BASE_URL
+              value: "http://hes-routing-service.hes-v2.svc.cluster.local:8000"
+            - name: MDMS_ENABLED
+              value: "true"
+            - name: MDMS_BASE_URL
+              value: "http://mdms-api.mdms-dev.svc.cluster.local:8000"
+            # --- Kafka consumers (dev broker is PLAINTEXT) -----------------
+            - name: KAFKA_ENABLED
+              value: "true"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.dev.polagram.in:9092"
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: "PLAINTEXT"
+            # --- Simulator cooperation (scenario proxy + DER bulk-import) --
+            - name: SIMULATOR_BASE_URL
+              value: "http://simulator-api.simulator.svc.cluster.local:8080"
+            - name: SIMULATOR_API_KEY
+              value: "dev-api-key"
+            # --- Spec-018 background services -------------------------------
+            - name: OUTAGE_CORRELATOR_ENABLED
+              value: "true"
+            - name: RELIABILITY_SCHEDULER_ENABLED
+              value: "true"
+            - name: REVERSE_FLOW_DETECTOR_ENABLED
+              value: "true"
+            - name: ALARM_RULE_ENGINE_ENABLED
+              value: "true"
+            - name: SCHEDULED_REPORTS_ENABLED
+              value: "true"
+            # --- Demo feature flags -----------------------------------------
+            - name: TARIFF_INCLINING_ENABLED
+              value: "true"
+            - name: SMART_INVERTER_COMMANDS_ENABLED
+              value: "true"
+            # --- MDMS-side features not yet deployed (see mdms-todos.md) ---
+            - name: MDMS_NTL_ENABLED
+              value: "false"
+            - name: WFM_ENABLED
+              value: "false"
+            # --- Notification providers (OFF until Ops provisions creds) ---
+            # To enable: rotate placeholder creds in config.py to real values
+            # via AWS Secrets Manager paths, then flip these flags.
+            - name: SMTP_ENABLED
+              value: "false"
+            - name: TWILIO_ENABLED
+              value: "false"
+            - name: FIREBASE_ENABLED
+              value: "false"
+            - name: TEAMS_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-ems-backend
+  namespace: polaris-ems
+spec:
+  selector:
+    app: polaris-ems-backend
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000

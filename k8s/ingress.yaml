@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: polaris-ems
+  namespace: polaris-ems
+  annotations:
+    alb.ingress.kubernetes.io/group.name: dev-private-application
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/ip-address-type: dualstack
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:703623468956:certificate/7cd705fe-32ba-4c0f-9fde-d4bf7cae5e4b
+    alb.ingress.kubernetes.io/subnets: subnet-09deb64fdc5ed61ed,subnet-0c3de70f0cb9c6973
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/success-codes: 200-399
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "300"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+    alb.ingress.kubernetes.io/tags: map-migrated=mig70U3Z9VNAJ
+    external-dns.alpha.kubernetes.io/hostname: vidyut360.dev.polagram.in
+    external-dns.alpha.kubernetes.io/ttl: "300"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: vidyut360.dev.polagram.in
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: polaris-ems-frontend
+                port:
+                  number: 80

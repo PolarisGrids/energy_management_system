@@ -1,0 +1,81 @@
+# Polaris EMS — Synthetic probe targets (spec 018, W5.T49)
+#
+# Each probe issues a GET against {base_url}{path} every `interval_seconds`
+# (driven by the CronJob schedule, not this file). Metrics emitted:
+#   ems_synthetic_probe_duration_seconds{endpoint,method,status,result}
+#   ems_synthetic_probe_errors_total{endpoint,method,reason}
+#   ems_synthetic_probe_up{endpoint}  (1/0)
+#
+# `expected_status` may be a single int or a list. If `body_contains` is set,
+# the (textual) body must contain the substring.
+# `timeout_seconds` bounds a single probe request; default 10s.
+# `auth` values: "none" (public probe) | "bearer" (uses PROBE_AUTH_TOKEN env).
+#
+# Kept intentionally small (~10 endpoints) so that the probe surface does not
+# create noise; these are load-bearing demo paths.
+
+base_url_env: PROBE_BASE_URL   # e.g. https://vidyut360.dev.polagram.in
+default_timeout_seconds: 10
+user_agent: "polaris-ems-synthetic-probe/1.0"
+
+probes:
+  - name: backend_health
+    path: /api/v1/health
+    auth: none
+    expected_status: 200
+    body_contains: '"status"'
+    critical: true
+
+  - name: meters_summary
+    path: /api/v1/meters/summary
+    auth: bearer
+    expected_status: [200, 204]
+    critical: true
+
+  - name: dashboards_index
+    path: /api/v1/dashboards
+    auth: bearer
+    expected_status: 200
+    critical: true
+
+  - name: outages_active
+    path: /api/v1/outages?status=active&limit=1
+    auth: bearer
+    expected_status: 200
+    critical: true
+
+  - name: ntl_suspects
+    path: /api/v1/ntl/suspects?limit=1
+    auth: bearer
+    expected_status: 200
+    critical: false
+
+  - name: mdms_tariffs_proxy
+    path: /api/v1/mdms/tariffs?limit=1
+    auth: bearer
+    expected_status: [200, 503]   # 503 tolerated if SSOT=mirror + upstream flap
+    critical: true
+
+  - name: hes_dcus
+    path: /api/v1/hes/dcus?limit=1
+    auth: bearer
+    expected_status: [200, 503]
+    critical: true
+
+  - name: alarms_open
+    path: /api/v1/alarms?state=open&limit=1
+    auth: bearer
+    expected_status: 200
+    critical: true
+
+  - name: gis_layers
+    path: /api/v1/gis/layers
+    auth: bearer
+    expected_status: 200
+    critical: false
+
+  - name: auth_me
+    path: /api/v1/auth/me
+    auth: bearer
+    expected_status: [200, 401]   # 401 means token expired — still a signal
+    critical: false

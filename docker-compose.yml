@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: smoc_db
+    environment:
+      POSTGRES_DB: smoc_ems
+      POSTGRES_USER: smoc
+      POSTGRES_PASSWORD: smoc_pass
+    volumes:
+      - smoc_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smoc -d smoc_ems"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smoc_backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://smoc:smoc_pass@db:5432/smoc_ems
+    ports:
+      - "8002:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: smoc_frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  smoc_pgdata:
