@@ -274,3 +274,54 @@ def list_layers(_: User = Depends(get_current_user)) -> Dict[str, Any]:
             for name, cfg in LAYER_CONFIG.items()
         ]
     }
+
+
+# ── Admin hierarchy drill-down (zone → consumer) ────────────────────────────
+# See app.services.hierarchy for the static demo mapping.
+from app.services import hierarchy as hierarchy_svc  # noqa: E402
+
+
+@router.get("/hierarchy/tree")
+def hierarchy_tree(
+    parent_id: Optional[str] = Query(None, description="Parent node id (None = root zone)"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return children of a hierarchy node, with aggregate stats.
+
+    Hierarchy: zone → circle → division → subdivision → substation → feeder → dtr → consumer.
+    """
+    result = hierarchy_svc.get_tree_children(db, parent_id)
+    level = result.get("node", {}).get("level") if isinstance(result, dict) else None
+    if level:
+        result["commands"] = hierarchy_svc.get_commands_for_level(level)
+    return result
+
+
+@router.get("/hierarchy/boundaries")
+def hierarchy_boundaries(_: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Bounding polygons for zone/circle/division/subdivision levels (GeoJSON)."""
+    return hierarchy_svc.get_boundaries_geojson()
+
+
+@router.post("/hierarchy/command")
+def hierarchy_command(
+    payload: Dict[str, Any],
+    _: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Dispatch a hierarchy-level command. For the demo, commands are logged
+    and acknowledged. Real-world wiring (switching, SMS, crew dispatch) would
+    fan out to the respective microservices here."""
+    cmd = payload.get("cmd")
+    node_id = payload.get("node_id")
+    if not cmd or not node_id:
+        raise HTTPException(status_code=400, detail="cmd and node_id required")
+    node = hierarchy_svc.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"node {node_id} not found")
+    return {
+        "ok": True,
+        "action": cmd,
+        "node": {"id": node["id"], "name": node["name"], "level": node["level"]},
+        "message": f"{cmd} dispatched for {node['name']}",
+    }

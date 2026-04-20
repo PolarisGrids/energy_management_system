@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: imresamu/postgis:16-3.4-alpine
     container_name: smoc_db
     environment:
       POSTGRES_DB: smoc_ems

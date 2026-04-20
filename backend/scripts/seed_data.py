@@ -601,26 +601,136 @@ def seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg):
     """Seed the 4 DER simulation scenarios with step-by-step network states."""
 
     # --- Scenario 1: Solar Overvoltage ---
+    # Rich topology + inverter fleet + droop algorithm state feed
+    # SolarOvervoltageViz on the Simulations page. Each step's network_state
+    # carries per-node voltages, algorithm step indicator, and per-inverter
+    # setpoints so the UI can animate curtailment propagation.
+    solar_nodes = [
+        {"id": f"N{i}", "name": f"N{i}", "distance_m": i * 80}
+        for i in range(1, 8)
+    ]
+    solar_inverters = [
+        {"id": f"INV-0{i}", "node": f"N{min(7, max(1, (i+1)//2 + 1))}",
+         "rated_kw": 5.0 if i <= 6 else 3.0, "customer": f"Consumer {i:02d}"}
+        for i in range(1, 10)
+    ]
     s1 = SimulationScenario(
         name="REQ-21: Solar Export Overvoltage",
         scenario_type=ScenarioType.SOLAR_OVERVOLTAGE,
         status=ScenarioStatus.IDLE,
-        description="Sunny afternoon with high solar export causing overvoltage on LV feeder. Demonstrates smart inverter curtailment.",
+        description="Sunny afternoon with high solar export causing overvoltage on LV feeder. Demonstrates smart inverter volt-watt droop curtailment.",
         feeder_id=feeders[0].id,
         transformer_id=transformers[5].id,
         der_asset_id=pv.id,
-        parameters={"target_voltage_max_pu": 1.10, "curtailment_threshold_pu": 1.08},
+        parameters={
+            "feeder_name": "F3 — Residential LV",
+            "target_voltage_max_pu": 1.10,
+            "curtailment_threshold_pu": 1.08,
+            "v_nominal": 230.0,
+            "v_ref": 230.0,
+            "v_onset": 246.0,
+            "v_limit": 253.0,
+            "k_droop_kw_per_v": 2.5,
+            "topology": {"nodes": solar_nodes, "inverters": solar_inverters},
+            "standards": ["AS/NZS 4777.2", "IEEE 1547-2018", "EN 50549"],
+        },
         total_steps=6,
     )
     db.add(s1)
     db.flush()
+
+    def _voltage_profile(v_end: float) -> dict:
+        """Linearly ramp node voltage from substation (1.00 pu) to feeder tip."""
+        v0 = 230.0
+        v_final = v_end
+        return {
+            node["id"]: round(v0 + (v_final - v0) * (i / (len(solar_nodes) - 1)), 2)
+            for i, node in enumerate(solar_nodes)
+        }
+
+    def _inverter_setpoints(avail_factor: float, curtail_kw_total: float) -> list:
+        """Proportionally share curtailment across the 6 nearest inverters."""
+        curtailing = solar_inverters[3:]  # INV-04..INV-09 closest to feeder tip
+        sum_avail = sum(inv["rated_kw"] * avail_factor for inv in curtailing)
+        out = []
+        for inv in solar_inverters:
+            avail = inv["rated_kw"] * avail_factor
+            if inv in curtailing and curtail_kw_total > 0 and sum_avail > 0:
+                share = (avail / sum_avail) * curtail_kw_total
+                setpoint = max(0.0, avail - share)
+            else:
+                setpoint = avail
+            out.append({
+                "id": inv["id"], "node": inv["node"],
+                "rated_kw": inv["rated_kw"],
+                "available_kw": round(avail, 2),
+                "setpoint_kw": round(setpoint, 2),
+                "curtailed_pct": round(100 * (1 - (setpoint / max(avail, 0.01))), 1),
+                "is_curtailing": setpoint < avail - 0.01,
+            })
+        return out
+
     solar_steps = [
-        (1, "Normal morning operation — PV generating at 40% capacity", {"voltage_pu": 1.01, "pv_output_kw": 100.0, "load_kw": 180.0}, False),
-        (2, "Solar irradiance increases — PV at 75% capacity, voltage rising", {"voltage_pu": 1.04, "pv_output_kw": 187.5, "load_kw": 160.0}, False),
-        (3, "Peak solar noon — PV at 100%, net export, voltage = 1.07 pu", {"voltage_pu": 1.07, "pv_output_kw": 250.0, "load_kw": 140.0}, False),
-        (4, "Voltage breaches 1.10 pu — OVERVOLTAGE ALARM triggered", {"voltage_pu": 1.12, "pv_output_kw": 250.0, "load_kw": 120.0}, True),
-        (5, "Smart inverter curtailment command issued — PV reduced to 150 kW", {"voltage_pu": 1.08, "pv_output_kw": 150.0, "load_kw": 120.0}, False),
-        (6, "Voltage returns to 1.03 pu — Normal operation restored", {"voltage_pu": 1.03, "pv_output_kw": 150.0, "load_kw": 130.0}, False),
+        (1, "Morning — PV fleet at 40% available, all voltages nominal",
+         {
+             "voltage_pu": 1.01, "pv_output_kw": 100.0, "load_kw": 180.0,
+             "algorithm_step": "monitor",
+             "node_voltages": _voltage_profile(236.0),
+             "v_tip": 236.0,
+             "inverters": _inverter_setpoints(0.40, 0.0),
+             "total_curtailment_kw": 0.0,
+         }, False),
+        (2, "Irradiance rising — fleet at 75%, tip voltage 244 V",
+         {
+             "voltage_pu": 1.04, "pv_output_kw": 187.5, "load_kw": 160.0,
+             "algorithm_step": "monitor",
+             "node_voltages": _voltage_profile(244.0),
+             "v_tip": 244.0,
+             "inverters": _inverter_setpoints(0.75, 0.0),
+             "total_curtailment_kw": 0.0,
+         }, False),
+        (3, "Peak solar — fleet at 100%, tip 251 V (approaching limit)",
+         {
+             "voltage_pu": 1.07, "pv_output_kw": 250.0, "load_kw": 140.0,
+             "algorithm_step": "detect",
+             "node_voltages": _voltage_profile(251.0),
+             "v_tip": 251.0,
+             "inverters": _inverter_setpoints(1.0, 0.0),
+             "total_curtailment_kw": 0.0,
+         }, False),
+        (4, "Overvoltage — N7 at 253.4 V — droop algorithm triggers",
+         {
+             "voltage_pu": 1.12, "pv_output_kw": 250.0, "load_kw": 120.0,
+             "algorithm_step": "compute",
+             "node_voltages": _voltage_profile(253.4),
+             "v_tip": 253.4,
+             "delta_v": 0.4,
+             "k_kw_per_v": 2.5,
+             "delta_p_kw": 1.0,
+             "inverters": _inverter_setpoints(1.0, 0.0),
+             "total_curtailment_kw": 0.0,
+         }, True),
+        (5, "Curtailment dispatched — INV-04..09 reduced, voltage falling",
+         {
+             "voltage_pu": 1.08, "pv_output_kw": 150.0, "load_kw": 120.0,
+             "algorithm_step": "curtail",
+             "node_voltages": _voltage_profile(248.5),
+             "v_tip": 248.5,
+             "delta_v": 0.4,
+             "k_kw_per_v": 2.5,
+             "delta_p_kw": 1.0,
+             "inverters": _inverter_setpoints(1.0, 1.0),
+             "total_curtailment_kw": 1.0,
+         }, False),
+        (6, "Voltage stable — ramping setpoints back up (10%/min)",
+         {
+             "voltage_pu": 1.03, "pv_output_kw": 150.0, "load_kw": 130.0,
+             "algorithm_step": "restore",
+             "node_voltages": _voltage_profile(240.0),
+             "v_tip": 240.0,
+             "inverters": _inverter_setpoints(0.85, 0.0),
+             "total_curtailment_kw": 0.0,
+         }, False),
     ]
     for step_num, desc, state, trigger_alarm in solar_steps:
         db.add(SimulationStep(
@@ -634,26 +744,120 @@ def seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg):
         ))
 
     # --- Scenario 2: EV Fast Charging ---
+    # 4-bay fast-charging hub on a 150 kVA zone TX. State per step gives
+    # winding temp, per-bay SoC/kW, OCPP setpoint, 4-hour forecast.
+    ev_bays = [
+        {"id": "BAY-1", "rated_kw": 150.0, "connector": "CCS2"},
+        {"id": "BAY-2", "rated_kw": 150.0, "connector": "CCS2"},
+        {"id": "BAY-3", "rated_kw": 150.0, "connector": "CHAdeMO"},
+        {"id": "BAY-4", "rated_kw": 150.0, "connector": "CCS2"},
+    ]
+    # 4-hour forecast (15-min buckets). Evening peak 16:30–17:30.
+    ev_forecast = [
+        {"t_offset_min": i * 15,
+         "predicted_kw": round(140 + 40 * math.sin(math.pi * i / 16) + 20 * (1 if 9 <= i <= 13 else 0), 1),
+         "curtailed_kw": 140.0}
+        for i in range(16)
+    ]
+
     s2 = SimulationScenario(
         name="REQ-22: EV Fast Charging Station Impact",
         scenario_type=ScenarioType.EV_FAST_CHARGING,
         status=ScenarioStatus.IDLE,
-        description="EV fast charging hub energised — transformer overload risk. Demonstrates load forecasting and curtailment.",
+        description="DC fast-charging hub energised — transformer overload risk. Demonstrates OCPP SetChargingProfile curtailment and 4-hour demand forecasting.",
         feeder_id=feeders[4].id,
         transformer_id=transformers[20].id,
         der_asset_id=ev.id,
-        parameters={"transformer_capacity_kva": 400.0, "overload_threshold_pct": 100.0},
+        parameters={
+            "station_name": "TX-07 Fast-Charge Hub",
+            "transformer_id_label": "TX-07",
+            "transformer_capacity_kva": 150.0,
+            "overload_threshold_pct": 100.0,
+            "winding_alarm_c": 90.0,
+            "winding_trip_c": 105.0,
+            "bays": ev_bays,
+            "forecast_4h": ev_forecast,
+            "station_envelope_kw": 140.0,
+            "protocol": "OCPP 2.0.1",
+        },
         total_steps=6,
     )
     db.add(s2)
     db.flush()
+
+    def _bay_state(plugged: list[bool], kw: list[float], soc: list[float],
+                   limit: list[float]) -> list:
+        out = []
+        for i, bay in enumerate(ev_bays):
+            out.append({
+                "id": bay["id"],
+                "connector": bay["connector"],
+                "plugged": plugged[i],
+                "charging_kw": kw[i],
+                "soc_pct": soc[i],
+                "setpoint_kw": limit[i],
+                "rated_kw": bay["rated_kw"],
+            })
+        return out
+
     ev_steps = [
-        (1, "EV hub energised — 1 charging session at 60 kW", {"ev_demand_kw": 60.0, "transformer_load_kw": 180.0, "loading_percent": 45.0, "active_sessions": 1}, False),
-        (2, "2nd vehicle connects — EV demand: 120 kW", {"ev_demand_kw": 120.0, "transformer_load_kw": 240.0, "loading_percent": 60.0, "active_sessions": 2}, False),
-        (3, "3rd vehicle: EV demand 180 kW, transformer at 80% — Warning", {"ev_demand_kw": 180.0, "transformer_load_kw": 320.0, "loading_percent": 80.0, "active_sessions": 3}, True),
-        (4, "4th vehicle: EV demand 240 kW — transformer OVERLOADED 105%", {"ev_demand_kw": 240.0, "transformer_load_kw": 420.0, "loading_percent": 105.0, "active_sessions": 4}, True),
-        (5, "Curtailment command issued — EV hub reduced to 140 kW total", {"ev_demand_kw": 140.0, "transformer_load_kw": 320.0, "loading_percent": 80.0, "active_sessions": 4}, False),
-        (6, "Load stabilised at 78% — EV charging continues at reduced rate", {"ev_demand_kw": 140.0, "transformer_load_kw": 312.0, "loading_percent": 78.0, "active_sessions": 4}, False),
+        (1, "Station energised — standby, no vehicles connected",
+         {
+             "ev_demand_kw": 0.0, "transformer_load_kw": 45.0,
+             "loading_percent": 30.0, "active_sessions": 0,
+             "winding_temp_c": 58.0, "oil_temp_c": 52.0,
+             "bays": _bay_state([False, False, False, False], [0, 0, 0, 0], [0, 0, 0, 0], [150, 150, 150, 150]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 600.0,
+         }, False),
+        (2, "1 EV connected — 125 kW draw, TX loading 113%",
+         {
+             "ev_demand_kw": 125.0, "transformer_load_kw": 170.0,
+             "loading_percent": 113.0, "active_sessions": 1,
+             "winding_temp_c": 76.0, "oil_temp_c": 68.0,
+             "bays": _bay_state([True, False, False, False], [125, 0, 0, 0], [32, 0, 0, 0], [150, 150, 150, 150]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 600.0,
+         }, False),
+        (3, "3 EVs charging — 177 kW demand, TX at 118% OVERLOAD",
+         {
+             "ev_demand_kw": 177.0, "transformer_load_kw": 177.0,
+             "loading_percent": 118.0, "active_sessions": 3,
+             "winding_temp_c": 92.0, "oil_temp_c": 79.0,
+             "bays": _bay_state([True, True, True, False], [75, 62, 40, 0], [48, 65, 82, 0], [150, 150, 150, 150]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 600.0,
+         }, True),
+        (4, "Curtailment via OCPP — SetChargingProfile 140 kW envelope",
+         {
+             "ev_demand_kw": 140.0, "transformer_load_kw": 140.0,
+             "loading_percent": 93.0, "active_sessions": 3,
+             "winding_temp_c": 86.0, "oil_temp_c": 74.0,
+             "bays": _bay_state([True, True, True, False], [60, 50, 30, 0], [52, 70, 88, 0], [65, 55, 35, 150]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 140.0,
+             "curtailment_active": True,
+         }, False),
+        (5, "4th EV connected — station at envelope limit 140 kW",
+         {
+             "ev_demand_kw": 140.0, "transformer_load_kw": 140.0,
+             "loading_percent": 93.0, "active_sessions": 4,
+             "winding_temp_c": 82.0, "oil_temp_c": 71.0,
+             "bays": _bay_state([True, True, True, True], [40, 40, 25, 35], [60, 78, 94, 22], [45, 45, 30, 45]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 140.0,
+             "curtailment_active": True,
+         }, False),
+        (6, "Steady state — TX stable, winding temp falling, forecast armed",
+         {
+             "ev_demand_kw": 138.0, "transformer_load_kw": 138.0,
+             "loading_percent": 92.0, "active_sessions": 4,
+             "winding_temp_c": 74.0, "oil_temp_c": 68.0,
+             "bays": _bay_state([True, True, True, True], [42, 38, 20, 38], [68, 85, 96, 30], [45, 45, 30, 45]),
+             "forecast": ev_forecast,
+             "station_setpoint_kw": 140.0,
+             "curtailment_active": True,
+         }, False),
     ]
     for step_num, desc, state, trigger_alarm in ev_steps:
         db.add(SimulationStep(
@@ -662,32 +866,86 @@ def seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg):
             description=desc,
             network_state=state,
             alarms_triggered=[{"type": "transformer_overload"}] if trigger_alarm else [],
-            commands_available=[{"cmd": "curtail_ev_charger", "label": "Curtail EV Charger", "target_id": ev.id}],
+            commands_available=[{"cmd": "curtail_ev_charger", "label": "Curtail EV Station (140 kW)", "target_id": ev.id}],
             duration_seconds=8.0,
         ))
 
     # --- Scenario 3: Peaking Microgrid ---
+    # 4-DER VPP with PV, gas peaker, BESS, EV fleet. network_state includes
+    # dispatch vector, reverse-flow vs relay margin, island mode, voltage
+    # at injection point.
     s3 = SimulationScenario(
         name="REQ-23: Peaking Microgrid Online",
         scenario_type=ScenarioType.PEAKING_MICROGRID,
         status=ScenarioStatus.IDLE,
-        description="Peaking microgrid comes online, causes reverse power flow on feeder. Demonstrates DER aggregation and islanding capability.",
+        description="Riverside Industrial peaking microgrid with 4 DERs (PV + gas peaker + BESS + EV fleet V2G). Reverse power flow event, VPP aggregation and island transition.",
         feeder_id=feeders[3].id,
         transformer_id=transformers[35].id,
         der_asset_id=mg.id,
-        parameters={"rated_capacity_kw": 500.0},
+        parameters={
+            "microgrid_name": "Riverside Industrial Precinct",
+            "feeder_name": "F7",
+            "reverse_power_relay_kw": -150.0,
+            "v_limit_pu": 1.10,
+            "v_limit_v": 253.0,
+            "assets": [
+                {"id": "PV-F7", "type": "pv", "rated_kw": 200.0, "label": "Solar PV Array"},
+                {"id": "GAS-F7", "type": "gas_peaker", "rated_kw": 150.0, "label": "Gas Peaker"},
+                {"id": "BESS-F7", "type": "bess", "rated_kw": 100.0, "capacity_kwh": 300.0, "label": "BESS"},
+                {"id": "EVF-F7", "type": "ev_fleet", "rated_kw": 120.0, "vehicles": 8, "label": "EV Fleet (V2G)"},
+            ],
+            "rated_capacity_kw": 500.0,
+        },
         total_steps=7,
     )
     db.add(s3)
     db.flush()
+
+    def _vpp(pv, gas, bess, evf, local_load, mode="individual",
+             islanded=False, v_pu=1.03):
+        generation = pv + gas + max(0, bess) + max(0, evf)
+        absorb = -min(0, bess) + -min(0, evf)  # positive when charging/absorbing
+        net_export = generation - local_load - absorb
+        reverse_power_kw = -net_export if net_export > 0 else 0.0
+        return {
+            "pv_kw": pv, "gas_kw": gas, "bess_kw": bess, "ev_fleet_kw": evf,
+            "total_gen_kw": round(generation, 1),
+            "local_load_kw": local_load,
+            "net_export_kw": round(net_export, 1),
+            "reverse_power_kw": round(reverse_power_kw, 1),
+            "relay_margin_kw": round(150.0 - reverse_power_kw, 1),
+            "output_kw": round(generation, 1),
+            "islanded": islanded,
+            "aggregation_mode": mode,
+            "v_pu_injection": v_pu,
+            "v_v_injection": round(230.0 * v_pu, 1),
+            "bess_soc_pct": 68.0,
+            "ev_fleet_soc_pct": 68.0,
+            "feeder_load_kw": round(max(0, local_load - generation), 1),
+        }
+
     mg_steps = [
-        (1, "Pre-evening peak — feeder loading at 75%, microgrid offline", {"output_kw": 0.0, "reverse_power_kw": 0.0, "islanded": False, "feeder_load_kw": 750.0}, False),
-        (2, "Microgrid starts — ramp to 200 kW, feeder load reduces", {"output_kw": 200.0, "reverse_power_kw": 0.0, "islanded": False, "feeder_load_kw": 550.0}, False),
-        (3, "Microgrid at 400 kW — feeder load drops to 350 kW", {"output_kw": 400.0, "reverse_power_kw": 0.0, "islanded": False, "feeder_load_kw": 350.0}, False),
-        (4, "Microgrid at full 500 kW — REVERSE POWER FLOW 150 kW", {"output_kw": 500.0, "reverse_power_kw": 150.0, "islanded": False, "feeder_load_kw": 200.0}, True),
-        (5, "Adding 2nd DER (BESS 200 kW) to microgrid cluster", {"output_kw": 500.0, "reverse_power_kw": 150.0, "islanded": False, "feeder_load_kw": 200.0, "bess_added": True}, False),
-        (6, "Microgrid transitions to islanded mode — grid disconnected", {"output_kw": 500.0, "reverse_power_kw": 0.0, "islanded": True, "feeder_load_kw": 500.0}, False),
-        (7, "Microgrid reconnects to grid — synchronised, reverse flow cleared", {"output_kw": 350.0, "reverse_power_kw": 0.0, "islanded": False, "feeder_load_kw": 400.0}, False),
+        (1, "Microgrid startup — PV warming up, local load 145 kW",
+         {**_vpp(55, 0, 0, 45, 145, mode="individual", v_pu=1.01),
+          "phase": "startup"}, False),
+        (2, "Solar ramping — PV at 140 kW, approaching net zero export",
+         {**_vpp(140, 0, 0, 45, 145, mode="individual", v_pu=1.03),
+          "phase": "ramp"}, False),
+        (3, "Solar peak — 200 kW PV, reverse flow 100 kW (relay margin 50 kW)",
+         {**_vpp(200, 0, 0, 45, 145, mode="individual", v_pu=1.06),
+          "phase": "reverse_flow"}, False),
+        (4, "Reverse flow 142 kW — 8 kW from −150 kW relay trip",
+         {**_vpp(287, 0, 0, 0, 145, mode="individual", v_pu=1.078),
+          "phase": "reverse_flow_critical"}, True),
+        (5, "VPP aggregation — BESS charging, EV fleet boosted, PV held",
+         {**_vpp(200, 0, -60, -30, 145, mode="vpp", v_pu=1.05),
+          "phase": "vpp_dispatch"}, False),
+        (6, "Fully resolved — +18 kW import target, all DERs balanced",
+         {**_vpp(200, 0, -75, -35, 178, mode="vpp", v_pu=1.02),
+          "phase": "resolved"}, False),
+        (7, "Island mode — grid disconnected, gas peaker forming voltage",
+         {**_vpp(180, 60, -20, 0, 220, mode="vpp", islanded=True, v_pu=1.00),
+          "phase": "island"}, False),
     ]
     for step_num, desc, state, trigger_alarm in mg_steps:
         db.add(SimulationStep(
@@ -697,7 +955,7 @@ def seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg):
             network_state=state,
             alarms_triggered=[{"type": "reverse_power"}] if trigger_alarm else [],
             commands_available=[
-                {"cmd": "curtail_inverter", "label": "Curtail Microgrid", "target_id": mg.id},
+                {"cmd": "curtail_inverter", "label": "Curtail PV", "target_id": mg.id},
                 {"cmd": "isolate_feeder", "label": "Isolate Feeder", "target_id": feeders[3].id},
             ],
             duration_seconds=8.0,
@@ -1179,6 +1437,39 @@ def seed_transformer_sensors(db, transformers):
     print(f"  Transformer sensors seeded: {total} sensors on {len(target_indices)} transformers")
 
 
+def _refresh_simulation_scenarios(db):
+    """Idempotent reseed of just the demo simulation scenarios.
+
+    The scenarios table holds presentation data driving the SMOC
+    /simulation page — safe to delete+recreate on every pod start so the
+    richer per-step `network_state` payloads flow without a DB wipe.
+    """
+    # Keep any running alarms tied to scenarios by nulling the FK first —
+    # cascade-delete of steps + scenarios is safe, but alarms are history.
+    from app.models.alarm import Alarm
+    db.query(Alarm).filter(Alarm.scenario_id.isnot(None)).update(
+        {Alarm.scenario_id: None}, synchronize_session=False
+    )
+    db.query(SimulationStep).delete(synchronize_session=False)
+    db.query(SimulationScenario).delete(synchronize_session=False)
+    db.commit()
+
+    feeders = db.query(Feeder).order_by(Feeder.id).all()
+    transformers = db.query(Transformer).order_by(Transformer.id).all()
+    if not feeders or not transformers:
+        print("  Skipping scenario refresh — network not seeded.")
+        return
+    pv = db.query(DERAsset).filter(DERAsset.asset_type == DERType.PV).first()
+    ev = db.query(DERAsset).filter(DERAsset.asset_type == DERType.EV_CHARGER).first()
+    mg = db.query(DERAsset).filter(DERAsset.asset_type == DERType.MICROGRID).first()
+    if not (pv and ev and mg):
+        print("  Skipping scenario refresh — DER assets missing.")
+        return
+    seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg)
+    db.commit()
+    print("  Scenario refresh complete.")
+
+
 def main():
     print("Seeding SMOC EMS database with South Africa LV network data...")
     db = SessionLocal()
@@ -1191,7 +1482,11 @@ def main():
 
         # Check if the rest of the network is already seeded
         if db.query(User).count() > 0 and db.query(Meter).count() > 0:
-            print("Database already seeded. Skipping network reseed.")
+            print("Database already seeded. Refreshing simulation scenarios only.")
+            # Refresh demo simulation scenarios so richer network_state /
+            # parameters roll in without a full DB wipe. Safe because the
+            # scenarios table is a presentation artefact, not load-bearing data.
+            _refresh_simulation_scenarios(db)
             return
 
         print("Seeding SA LV network (feeders, transformers, meters)...")
