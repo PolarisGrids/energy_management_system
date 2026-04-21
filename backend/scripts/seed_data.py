@@ -1498,6 +1498,12 @@ def seed_transformer_sensors(db, transformers):
         ("noise_db",          "Acoustic Noise",        "dB",    62.0,  75.0,  85.0),
         # Protection — discrete state
         ("buchholz_status",   "Buchholz Relay Status", "code",   0.0,   1.0,   2.0),
+        # Environmental — SMOC-FUNC-018 FR-03/04 (smoke + water + door sensors
+        # in the distribution room). Stored as booleans (0 = OK, 1 = alarm).
+        ("smoke",             "Smoke Detector",        "bool",   0.0,   1.0,   1.0),
+        ("water_immersion",   "Water / Flood Sensor",  "bool",   0.0,   1.0,   1.0),
+        ("door_access",       "Door Access Sensor",    "bool",   0.0,   1.0,   1.0),
+        ("ambient_temp",      "Ambient Temperature",   "degC",  28.0,  42.0,  55.0),
     ]
 
     # Instrument every transformer. T-005 is the scenario transformer (picked
@@ -1519,8 +1525,11 @@ def seed_transformer_sensors(db, transformers):
             if (transformer.id, stype) in existing:
                 continue
             variation = random.uniform(0.95, 1.05)
-            # Discrete-state sensors (Buchholz) must not randomise — stay at OK.
-            seed_value = default_val if stype == "buchholz_status" else round(default_val * variation, 1)
+            # Discrete-state / boolean sensors must not randomise — stay at OK.
+            if stype in ("buchholz_status", "smoke", "water_immersion", "door_access"):
+                seed_value = default_val
+            else:
+                seed_value = round(default_val * variation, 1)
             sensor = TransformerSensor(
                 transformer_id=transformer.id,
                 sensor_type=stype,
