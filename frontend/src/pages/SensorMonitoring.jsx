@@ -5,10 +5,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Thermometer, Droplets, Activity, Waves, AlertTriangle, CheckCircle,
-  RefreshCw, ChevronRight, ArrowLeft, Settings,
+  RefreshCw, ChevronRight, ArrowLeft, Settings, Zap, Volume2,
+  ShieldAlert, MapPin, Gauge, Radio,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
-import { sensorsAPI } from '@/services/api'
+import { Link } from 'react-router-dom'
+import { sensorsAPI, metersAPI } from '@/services/api'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -18,9 +20,22 @@ const SENSOR_META = {
   oil_level:       { label: 'Oil Level',       icon: Droplets,    color: '#3B82F6', displayUnit: '%' },
   vibration:       { label: 'Vibration',       icon: Activity,    color: '#8B5CF6', displayUnit: 'mm/s' },
   humidity:        { label: 'Humidity',        icon: Waves,       color: '#06B6D4', displayUnit: '%' },
-  current_phase_a: { label: 'Phase A',         icon: Activity,    color: '#F59E0B', displayUnit: 'A' },
-  current_phase_b: { label: 'Phase B',         icon: Activity,    color: '#10B981', displayUnit: 'A' },
-  current_phase_c: { label: 'Phase C',         icon: Activity,    color: '#EC4899', displayUnit: 'A' },
+  current_phase_a: { label: 'Current A',       icon: Activity,    color: '#F59E0B', displayUnit: 'A' },
+  current_phase_b: { label: 'Current B',       icon: Activity,    color: '#10B981', displayUnit: 'A' },
+  current_phase_c: { label: 'Current C',       icon: Activity,    color: '#EC4899', displayUnit: 'A' },
+  voltage_phase_a: { label: 'Voltage A',       icon: Zap,         color: '#FBBF24', displayUnit: 'V' },
+  voltage_phase_b: { label: 'Voltage B',       icon: Zap,         color: '#34D399', displayUnit: 'V' },
+  voltage_phase_c: { label: 'Voltage C',       icon: Zap,         color: '#F472B6', displayUnit: 'V' },
+  partial_discharge: { label: 'Partial Discharge', icon: Radio,   color: '#A78BFA', displayUnit: 'pC' },
+  noise_db:          { label: 'Acoustic Noise',    icon: Volume2, color: '#60A5FA', displayUnit: 'dB' },
+  buchholz_status:   { label: 'Buchholz Relay',    icon: ShieldAlert, color: '#FB7185', displayUnit: '' },
+}
+
+// Buchholz coded value: 0=OK, 1=Alarm (gas accumulation), 2=Trip (oil surge).
+const BUCHHOLZ_STATES = {
+  0: { label: 'OK',    color: '#02C9A8', bg: 'rgba(2,201,168,0.12)',   desc: 'No gas accumulation, oil flow normal' },
+  1: { label: 'ALARM', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)',  desc: 'Gas accumulation detected — inspect transformer' },
+  2: { label: 'TRIP',  color: '#E94B4B', bg: 'rgba(233,75,75,0.12)',   desc: 'Oil surge — transformer isolated' },
 }
 
 const STATUS_CONFIG = {
@@ -32,11 +47,18 @@ const STATUS_CONFIG = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function groupSensorsByTransformer(sensors) {
+function groupSensorsByTransformer(sensors, transformerMeta = {}) {
   const map = {}
   for (const s of sensors) {
     if (!map[s.transformer_id]) {
-      map[s.transformer_id] = { transformerId: s.transformer_id, sensors: [], name: null }
+      const meta = transformerMeta[s.transformer_id] || {}
+      map[s.transformer_id] = {
+        transformerId: s.transformer_id,
+        sensors: [],
+        name: meta.name || null,
+        latitude: meta.latitude ?? null,
+        longitude: meta.longitude ?? null,
+      }
     }
     map[s.transformer_id].sensors.push(s)
     // Extract transformer name from sensor name (e.g., "Winding Temperature -- TX-1201")
@@ -219,16 +241,19 @@ function TransformerCard({ group, onSelect }) {
 function TransformerDetail({ group, onBack }) {
   const [historyMap, setHistoryMap] = useState({})
   const [loadingHistory, setLoadingHistory] = useState(true)
+  const [historyHours, setHistoryHours] = useState(24)
 
   useEffect(() => {
     setLoadingHistory(true)
-    const primaryIds = group.sensors
-      .filter(s => ['winding_temp', 'oil_temp', 'oil_level', 'vibration'].includes(s.sensor_type))
+    // Fetch history for all trendable sensor types (skip discrete-state sensors
+    // like buchholz_status where a time-series chart is meaningless).
+    const trendableIds = group.sensors
+      .filter(s => s.sensor_type !== 'buchholz_status')
       .map(s => s.id)
 
     Promise.all(
-      primaryIds.map(id =>
-        sensorsAPI.history(id, 24)
+      trendableIds.map(id =>
+        sensorsAPI.history(id, historyHours)
           .then(({ data }) => ({ id, data }))
           .catch(() => null)
       )
@@ -240,7 +265,7 @@ function TransformerDetail({ group, onBack }) {
       setHistoryMap(map)
       setLoadingHistory(false)
     })
-  }, [group.transformerId])
+  }, [group.transformerId, historyHours])
 
   const overallStatus = getTransformerStatus(group.sensors)
   const cfg = STATUS_CONFIG[overallStatus]
@@ -249,16 +274,23 @@ function TransformerDetail({ group, onBack }) {
     ['winding_temp', 'oil_temp', 'oil_level', 'vibration'].includes(s.sensor_type)
   )
   const phaseSensors = group.sensors.filter(s => s.sensor_type.startsWith('current_phase'))
+  const voltageSensors = group.sensors.filter(s => s.sensor_type.startsWith('voltage_phase'))
+  const conditionSensors = group.sensors.filter(s =>
+    ['partial_discharge', 'noise_db'].includes(s.sensor_type)
+  )
+  const buchholz = group.sensors.find(s => s.sensor_type === 'buchholz_status')
   const otherSensors = group.sensors.filter(s =>
-    !['winding_temp', 'oil_temp', 'oil_level', 'vibration'].includes(s.sensor_type) &&
-    !s.sensor_type.startsWith('current_phase')
+    !['winding_temp', 'oil_temp', 'oil_level', 'vibration',
+      'partial_discharge', 'noise_db', 'buchholz_status'].includes(s.sensor_type) &&
+    !s.sensor_type.startsWith('current_phase') &&
+    !s.sensor_type.startsWith('voltage_phase')
   )
 
   return (
     <div className="space-y-4 animate-slide-up">
       {/* Header */}
       <div className="glass-card p-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button onClick={onBack} className="btn-secondary p-2">
             <ArrowLeft size={14} />
           </button>
@@ -274,7 +306,38 @@ function TransformerDetail({ group, onBack }) {
               11kV/400V | {group.sensors.length} DCU-connected sensors | Real-time monitoring
             </div>
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {/* History range */}
+            <div className="flex items-center bg-white/5 rounded-lg p-0.5">
+              {[
+                { label: '24h', value: 24 },
+                { label: '7d',  value: 168 },
+              ].map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => setHistoryHours(value)}
+                  className="px-2 py-1 rounded text-xs font-bold transition-colors"
+                  style={{
+                    background: historyHours === value ? 'rgba(59,130,246,0.25)' : 'transparent',
+                    color: historyHours === value ? '#60A5FA' : 'rgba(255,255,255,0.45)',
+                  }}
+                >{label}</button>
+              ))}
+            </div>
+            <Link
+              to={`/sensors/rules?transformer=${group.transformerId}`}
+              className="btn-secondary py-1.5 px-3"
+              style={{ fontSize: 12 }}
+            >
+              <Gauge size={12} className="inline mr-1" /> Rules
+            </Link>
+            <Link
+              to={`/sensors/alerts?transformer=${group.transformerId}`}
+              className="btn-secondary py-1.5 px-3"
+              style={{ fontSize: 12 }}
+            >
+              <AlertTriangle size={12} className="inline mr-1" /> Alerts
+            </Link>
             <span className="px-3 py-1.5 rounded-lg text-xs font-bold"
               style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}30` }}>
               {cfg.label.toUpperCase()}
@@ -282,6 +345,33 @@ function TransformerDetail({ group, onBack }) {
           </div>
         </div>
       </div>
+
+      {/* Buchholz protection status — surface at top when not OK */}
+      {buchholz && (() => {
+        const state = BUCHHOLZ_STATES[Math.round(buchholz.value ?? 0)] || BUCHHOLZ_STATES[0]
+        return (
+          <div className="glass-card p-3 flex items-center gap-3"
+            style={{
+              borderColor: state.color + '40',
+              background: state.label === 'OK' ? undefined : state.bg,
+            }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: state.bg }}>
+              <ShieldAlert size={14} style={{ color: state.color }} />
+            </div>
+            <div>
+              <div className="text-white font-bold" style={{ fontSize: 13 }}>
+                Buchholz Relay — <span style={{ color: state.color }}>{state.label}</span>
+              </div>
+              <div className="text-white/40" style={{ fontSize: 11 }}>{state.desc}</div>
+            </div>
+            {state.label !== 'OK' && (
+              <span className="ml-auto w-2.5 h-2.5 rounded-full"
+                style={{ background: state.color, boxShadow: `0 0 12px ${state.color}` }} />
+            )}
+          </div>
+        )
+      })()}
 
       {/* Primary sensors with gauges + trends */}
       <div className="grid grid-cols-2 gap-4">
@@ -363,6 +453,48 @@ function TransformerDetail({ group, onBack }) {
         })}
       </div>
 
+      {/* Phase voltages — LV-side electrical view, centred on 230 V nominal */}
+      {voltageSensors.length > 0 && (
+        <div className="glass-card p-4">
+          <div className="text-white/40 font-bold mb-3" style={{ fontSize: 11 }}>PHASE VOLTAGES (LV)</div>
+          <div className="grid grid-cols-3 gap-4">
+            {voltageSensors.map(sensor => {
+              const meta = SENSOR_META[sensor.sensor_type] || {}
+              const nominal = 230
+              const warnBand = sensor.threshold_warning ?? 253
+              const deviation = Math.abs(sensor.value - nominal)
+              const band = warnBand - nominal
+              const pct = band > 0 ? Math.min((deviation / (band * 1.5)) * 100, 100) : 0
+              return (
+                <div key={sensor.id} className="bg-white/3 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-white/50 font-medium" style={{ fontSize: 11 }}>{meta.label}</span>
+                    <span className="w-2 h-2 rounded-full" style={{ background: STATUS_CONFIG[sensor.status]?.color }} />
+                  </div>
+                  <div className="text-white font-black" style={{ fontSize: 24 }}>
+                    {sensor.value?.toFixed(1)}
+                    <span className="text-white/30 font-normal ml-1" style={{ fontSize: 12 }}>V</span>
+                  </div>
+                  <div className="mt-2">
+                    <div className="w-full h-1.5 rounded-full bg-white/5 relative">
+                      <div className="absolute top-0 bottom-0 w-[1px] bg-white/30" style={{ left: '50%' }} />
+                      <div className="h-1.5 rounded-full transition-all" style={{
+                        width: `${pct}%`,
+                        marginLeft: sensor.value < nominal ? `${50 - pct}%` : '50%',
+                        background: STATUS_CONFIG[sensor.status]?.color || meta.color,
+                      }} />
+                    </div>
+                    <div className="text-white/20 mt-1" style={{ fontSize: 9 }}>
+                      Δ {(sensor.value - nominal).toFixed(1)} V from 230 V nominal
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Phase currents */}
       {phaseSensors.length > 0 && (
         <div className="glass-card p-4">
@@ -399,6 +531,106 @@ function TransformerDetail({ group, onBack }) {
         </div>
       )}
 
+      {/* Condition monitoring — partial discharge + acoustic noise with gauges+trend */}
+      {conditionSensors.length > 0 && (
+        <div className="grid grid-cols-2 gap-4">
+          {conditionSensors.map(sensor => {
+            const meta = SENSOR_META[sensor.sensor_type] || {}
+            const history = historyMap[sensor.id]
+            const gaugeMin = 0
+            const gaugeMax = sensor.sensor_type === 'partial_discharge' ? 1500 : 100
+            return (
+              <div key={sensor.id} className="glass-card p-4" style={{
+                borderColor: sensor.status !== 'normal' ? (STATUS_CONFIG[sensor.status]?.color + '40') : undefined,
+              }}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {meta.icon && <meta.icon size={14} style={{ color: meta.color }} />}
+                    <span className="text-white font-bold text-sm">{meta.label}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-xs font-bold"
+                    style={{
+                      background: STATUS_CONFIG[sensor.status]?.bg,
+                      color: STATUS_CONFIG[sensor.status]?.color,
+                    }}>
+                    {sensor.status?.toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="flex gap-3">
+                  <div style={{ width: 130, height: 130, flexShrink: 0 }}>
+                    <ReactECharts
+                      option={buildGaugeOption(
+                        sensor.value, gaugeMin, gaugeMax,
+                        sensor.threshold_warning, sensor.threshold_critical,
+                        meta.color, sensor.sensor_type
+                      )}
+                      style={{ height: 130, width: 130 }}
+                      opts={{ renderer: 'canvas' }}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    {loadingHistory ? (
+                      <div className="flex items-center justify-center h-full text-white/20 text-xs">
+                        <RefreshCw size={12} className="animate-spin mr-2" /> Loading trend...
+                      </div>
+                    ) : history && history.history?.length > 0 ? (
+                      <ReactECharts
+                        option={buildDetailTrendOption(
+                          history.history,
+                          sensor.threshold_warning, sensor.threshold_critical,
+                          meta.color, meta.displayUnit, sensor.sensor_type
+                        )}
+                        style={{ height: 130 }}
+                        opts={{ renderer: 'canvas' }}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-white/20 text-xs">
+                        No trend data available
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-between mt-2 pt-2 border-t" style={{ borderColor: 'rgba(171,199,255,0.06)' }}>
+                  <span className="text-white/30" style={{ fontSize: 10 }}>
+                    Warning: {sensor.threshold_warning} {meta.displayUnit}
+                  </span>
+                  <span className="text-white/30" style={{ fontSize: 10 }}>
+                    Critical: {sensor.threshold_critical} {meta.displayUnit}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Location — GPS coordinates for field inspection */}
+      {(group.latitude != null || group.longitude != null) && (
+        <div className="glass-card p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+              style={{ background: 'rgba(59,130,246,0.12)' }}>
+              <MapPin size={14} style={{ color: '#60A5FA' }} />
+            </div>
+            <div>
+              <div className="text-white font-bold" style={{ fontSize: 13 }}>GPS Location</div>
+              <div className="text-white/40 font-mono" style={{ fontSize: 11 }}>
+                {group.latitude != null ? group.latitude.toFixed(5) : '—'}, {group.longitude != null ? group.longitude.toFixed(5) : '—'}
+              </div>
+            </div>
+            <Link
+              to={`/gis?focus=transformer:${group.transformerId}`}
+              className="ml-auto btn-secondary py-1.5 px-3"
+              style={{ fontSize: 12 }}
+            >
+              Open in GIS
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Other sensors */}
       {otherSensors.length > 0 && (
         <div className="glass-card p-4">
@@ -427,6 +659,7 @@ function TransformerDetail({ group, onBack }) {
 
 export default function SensorMonitoring() {
   const [sensors, setSensors] = useState([])
+  const [transformerMeta, setTransformerMeta] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedGroup, setSelectedGroup] = useState(null)
@@ -450,7 +683,18 @@ export default function SensorMonitoring() {
     return () => clearInterval(interval)
   }, [fetchSensors])
 
-  const groups = groupSensorsByTransformer(sensors)
+  // Transformer metadata (name + lat/lon) for GPS card — fetched once.
+  useEffect(() => {
+    metersAPI.transformers()
+      .then(({ data }) => {
+        const map = {}
+        for (const t of data || []) map[t.id] = t
+        setTransformerMeta(map)
+      })
+      .catch(() => { /* non-fatal — GPS card degrades to em-dash */ })
+  }, [])
+
+  const groups = groupSensorsByTransformer(sensors, transformerMeta)
 
   const totalSensors = sensors.length
   const criticalCount = sensors.filter(s => s.status === 'critical').length
