@@ -30,7 +30,7 @@ test.describe('New features verification (post-7de9395)', () => {
     await page.goto('/simulation')
     await page.getByText(/Solar Overvoltage/i).first().click()
     await expect(
-      page.getByText(/LV Feeder Droop Curtailment/i)
+      page.getByText(/Droop curtailment algorithm/i)
     ).toBeVisible({ timeout: 12000 })
   })
 
