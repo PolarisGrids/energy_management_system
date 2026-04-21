@@ -23,7 +23,13 @@ api.interceptors.request.use((config) => {
 // (/api/v1/hes/*, /api/v1/mdms/*) forwards to upstream services that use
 // Cognito JWTs with a different audience, so they will legitimately 401
 // even with a valid SMOC token. Those must NOT log the user out.
-const PROXY_PATH_RE = /^\/?(hes|mdms)\//
+//
+// /reports/egsm/* and /reports/egsm-analytics/* are also MDMS-backed proxies
+// (to the EGSM report + analytics services respectively). They share the
+// same Cognito-audience issue, so bypass logout for them too — otherwise
+// opening Energy Audit Master or Reliability Indices while MDMS is
+// unreachable or unauthed kicks the user back to /login on every load.
+const PROXY_PATH_RE = /^\/?(hes|mdms|reports\/egsm(-analytics)?)\//
 api.interceptors.response.use(
   (res) => res,
   (err) => {
