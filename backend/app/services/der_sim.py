@@ -182,11 +182,80 @@ _INSERT_SQL = text("""
          :soc_pct, :session_energy_kwh, :achievement_rate_pct, :curtailment_pct)
 """)
 
+_INSERT_INV_TELEMETRY_SQL = text("""
+    INSERT INTO der_inverter_telemetry
+        (inverter_id, ts, ac_voltage_v, ac_current_a, ac_power_kw,
+         ac_frequency_hz, power_factor, dc_voltage_v, dc_current_a,
+         temperature_c, efficiency_pct)
+    VALUES
+        (:inverter_id, :ts, :ac_voltage_v, :ac_current_a, :ac_power_kw,
+         :ac_frequency_hz, :power_factor, :dc_voltage_v, :dc_current_a,
+         :temperature_c, :efficiency_pct)
+    ON CONFLICT (inverter_id, ts) DO NOTHING
+""")
+
 
 def _flush(db: Session, rows: list[dict]) -> None:
     if rows:
         db.execute(_INSERT_SQL, rows)
         db.commit()
+
+
+def _flush_inv(db: Session, rows: list[dict]) -> None:
+    if rows:
+        db.execute(_INSERT_INV_TELEMETRY_SQL, rows)
+        db.commit()
+
+
+def _inverter_telemetry_fields(asset_power_kw: float, rated_ac_kw: float,
+                                state: str) -> dict:
+    """Derive per-inverter telemetry fields from the parent asset's tick.
+
+    Assumes a single-inverter PV: the inverter's AC power equals the asset's
+    active power (clamped to rated AC). DC power ≈ AC / efficiency. Voltage,
+    current, temperature and efficiency are computed around typical values.
+    """
+    p_ac = max(0.0, min(float(rated_ac_kw) * 1.05, float(asset_power_kw)))
+    load = p_ac / rated_ac_kw if rated_ac_kw > 0 else 0.0
+    # Efficiency curves: low at partial load, peak ~97% near rated output.
+    eff = 85.0 + 12.0 * load - 4.0 * (load ** 2) if load > 0 else 0.0
+    eff = max(0.0, min(98.5, eff))
+    p_dc = p_ac / (eff / 100.0) if eff > 5 else 0.0
+    ac_v = round(random.gauss(230.0, 3.0), 2)
+    ac_f = round(random.gauss(50.0, 0.04), 3)
+    pf = round(random.uniform(0.96, 0.999), 3) if p_ac > 0.1 else None
+    ac_i = round((p_ac * 1000) / (ac_v * 1.732) if p_ac > 0 else 0.0, 3)
+    dc_v = round(random.uniform(540.0, 780.0) if p_dc > 0.1 else 0.0, 2)
+    dc_i = round((p_dc * 1000) / dc_v if dc_v > 5 else 0.0, 3)
+    # Ambient drift: 22°C base + load-driven rise + small noise.
+    temp = round(22.0 + 28.0 * load + random.gauss(0, 1.0), 2) if p_ac > 0.1 \
+        else round(random.gauss(22.0, 1.5), 2)
+    return {
+        "ac_voltage_v": ac_v,
+        "ac_current_a": ac_i,
+        "ac_power_kw": round(p_ac, 3),
+        "ac_frequency_hz": ac_f,
+        "power_factor": pf,
+        "dc_voltage_v": dc_v,
+        "dc_current_a": dc_i,
+        "temperature_c": temp,
+        "efficiency_pct": round(eff, 2),
+    }
+
+
+def _load_pv_inverter_map(db: Session) -> dict[str, list[tuple[str, float]]]:
+    """Return {asset_id: [(inverter_id, rated_ac_kw), ...]} for PV assets."""
+    rows = db.execute(text("""
+        SELECT i.asset_id, i.id,
+               COALESCE(i.rated_ac_kw, a.capacity_kw, 10)::float
+        FROM der_inverter i
+        JOIN der_asset a ON a.id = i.asset_id
+        WHERE a.type = 'pv'
+    """)).fetchall()
+    m: dict[str, list[tuple[str, float]]] = {}
+    for asset_id, inv_id, rated in rows:
+        m.setdefault(asset_id, []).append((inv_id, rated))
+    return m
 
 
 # ── Back-fill ──────────────────────────────────────────────────────────────────
@@ -255,17 +324,73 @@ def _ensure_inverters_for_pv(db: Session) -> int:
     return len(rows)
 
 
+def _backfill_inverter_telemetry(db: Session) -> int:
+    """Back-fill per-inverter telemetry for PV inverters that have none in
+    the last 2h. Derives inverter readings from the asset's existing
+    der_telemetry rows so the two stay aligned.
+    """
+    now = _aligned_now()
+    cutoff_stale = now - timedelta(hours=2)
+    start = now - timedelta(days=HISTORY_DAYS)
+
+    stale_invs = db.execute(text("""
+        SELECT i.id, i.asset_id,
+               COALESCE(i.rated_ac_kw, a.capacity_kw, 10)::float AS rated_ac,
+               COALESCE(a.capacity_kw, i.rated_ac_kw, 10)::float AS cap_kw
+        FROM der_inverter i
+        JOIN der_asset a ON a.id = i.asset_id
+        WHERE a.type = 'pv'
+          AND NOT EXISTS (
+              SELECT 1 FROM der_inverter_telemetry t
+              WHERE t.inverter_id = i.id AND t.ts >= :cutoff
+          )
+    """), {"cutoff": cutoff_stale}).fetchall()
+
+    if not stale_invs:
+        return 0
+
+    log.info("der_sim: back-filling telemetry for %d stale inverters", len(stale_invs))
+
+    for inv_id, asset_id, rated_ac, cap_kw in stale_invs:
+        # Pull parent-asset telemetry in the window; derive inverter fields.
+        asset_rows = db.execute(text("""
+            SELECT ts, state, active_power_kw FROM der_telemetry
+            WHERE asset_id = :aid AND ts >= :start
+            ORDER BY ts
+        """), {"aid": asset_id, "start": start}).fetchall()
+
+        inv_rows: list[dict] = []
+        for ts, state, p_kw in asset_rows:
+            p_asset = float(p_kw or 0.0)
+            share = p_asset * (rated_ac / cap_kw) if cap_kw else p_asset
+            inv_fields = _inverter_telemetry_fields(share, rated_ac, state or "online")
+            inv_rows.append({"inverter_id": inv_id, "ts": ts, **inv_fields})
+            if len(inv_rows) >= BATCH:
+                _flush_inv(db, inv_rows)
+                inv_rows = []
+        _flush_inv(db, inv_rows)
+    log.info("der_sim: inverter telemetry backfill complete")
+    return len(stale_invs)
+
+
 def backfill(db: Session) -> int:
     """Fill 30 days of history for every asset that has no data in the last 2h.
 
     Returns number of assets back-filled. Also ensures every PV asset has at
-    least one inverter registered (demo data).
+    least one inverter registered and that inverter telemetry is populated.
     """
     # Make sure PV assets have inverters registered (demo data).
     try:
         _ensure_inverters_for_pv(db)
     except Exception as exc:
         log.error("der_sim: inverter ensure error: %s", exc)
+        db.rollback()
+
+    # Back-fill inverter telemetry (independent of asset-telemetry gate).
+    try:
+        _backfill_inverter_telemetry(db)
+    except Exception as exc:
+        log.error("der_sim: inverter telemetry backfill error: %s", exc)
         db.rollback()
 
     now = _aligned_now()
@@ -292,12 +417,15 @@ def backfill(db: Session) -> int:
     _ensure_partitions_range(db, start, now)
 
     n_steps = int((now - start).total_seconds() / TICK_SECONDS) + 1
+    pv_inverters = _load_pv_inverter_map(db)
 
     for asset_id, atype, cap_kw, cap_kwh in stale:
         rows: list[dict] = []
+        inv_rows: list[dict] = []
         soc = random.uniform(45.0, 75.0)
         ev_active = False
         ev_se = 0.0
+        inverters = pv_inverters.get(asset_id, []) if atype == "pv" else []
 
         for step in range(n_steps):
             ts = start + timedelta(seconds=step * TICK_SECONDS)
@@ -309,10 +437,23 @@ def backfill(db: Session) -> int:
                 fields, ev_active, ev_se = _ev_tick(ts, cap_kw, ev_active, ev_se)
 
             rows.append({"asset_id": asset_id, "ts": ts, **fields})
+
+            # Mirror PV output onto each attached inverter.
+            if inverters and atype == "pv":
+                p_asset = float(fields["active_power_kw"] or 0.0)
+                for inv_id, rated_ac in inverters:
+                    share = p_asset * (rated_ac / cap_kw) if cap_kw else p_asset
+                    inv_fields = _inverter_telemetry_fields(share, rated_ac, fields["state"])
+                    inv_rows.append({"inverter_id": inv_id, "ts": ts, **inv_fields})
+
             if len(rows) >= BATCH:
                 _flush(db, rows)
                 rows = []
+            if len(inv_rows) >= BATCH:
+                _flush_inv(db, inv_rows)
+                inv_rows = []
         _flush(db, rows)
+        _flush_inv(db, inv_rows)
 
     log.info("der_sim: backfill complete (%d assets, ~%d rows each)", len(stale), n_steps)
     return len(stale)
@@ -342,7 +483,10 @@ def tick(db: Session) -> int:
         FROM der_asset
     """)).fetchall()
 
+    pv_inverters = _load_pv_inverter_map(db)
     rows: list[dict] = []
+    inv_rows: list[dict] = []
+
     for asset_id, atype, cap_kw, cap_kwh in assets:
         if atype == "pv":
             fields = _pv_tick(now, cap_kw, asset_id)
@@ -356,10 +500,23 @@ def tick(db: Session) -> int:
             _ev_state[asset_id] = (active, se)
 
         rows.append({"asset_id": asset_id, "ts": now, **fields})
+
+        if atype == "pv":
+            p_asset = float(fields["active_power_kw"] or 0.0)
+            for inv_id, rated_ac in pv_inverters.get(asset_id, []):
+                share = p_asset * (rated_ac / cap_kw) if cap_kw else p_asset
+                inv_fields = _inverter_telemetry_fields(share, rated_ac, fields["state"])
+                inv_rows.append({"inverter_id": inv_id, "ts": now, **inv_fields})
+
         if len(rows) >= BATCH:
             _flush(db, rows)
             rows = []
+        if len(inv_rows) >= BATCH:
+            _flush_inv(db, inv_rows)
+            inv_rows = []
+
     _flush(db, rows)
+    _flush_inv(db, inv_rows)
     return len(assets)
 
 

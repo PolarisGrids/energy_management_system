@@ -44,8 +44,12 @@ export default function DEREv() {
   const [trend30d, setTrend30d] = useState({ aggregate: [] })
   const [feeders, setFeeders] = useState([])
   const [types, setTypes] = useState([])
-  const [evRate, setEvRate] = useState(null)
-  const [evRateMissing, setEvRateMissing] = useState(false)
+  // Default rate (R/kWh) — typical SA DC fast-charge tariff. Overridden by
+  // MDMS if that source returns an EV-class rate, and surfaced in the UI as
+  // "default" until MDMS responds.
+  const DEFAULT_EV_RATE = 4.50
+  const [evRate, setEvRate] = useState(DEFAULT_EV_RATE)
+  const [evRateIsDefault, setEvRateIsDefault] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshedAt, setRefreshedAt] = useState(null)
@@ -58,7 +62,7 @@ export default function DEREv() {
         const direct = await mdmsAPI.tariff?.('ev_owner').catch(() => null)
         if (!cancelled && direct?.data) {
           const r = direct.data.rate_per_kwh ?? direct.data.r_per_kwh ?? direct.data.rate
-          if (r != null) { setEvRate(Number(r)); return }
+          if (r != null) { setEvRate(Number(r)); setEvRateIsDefault(false); return }
         }
         const list = await mdmsAPI.tariffs()
         const rows = Array.isArray(list.data)
@@ -69,10 +73,9 @@ export default function DEREv() {
         )
         if (cancelled) return
         const r = ev?.rate_per_kwh ?? ev?.r_per_kwh ?? ev?.rate
-        if (r != null) setEvRate(Number(r))
-        else setEvRateMissing(true)
+        if (r != null) { setEvRate(Number(r)); setEvRateIsDefault(false) }
       } catch {
-        if (!cancelled) setEvRateMissing(true)
+        // Keep default rate on failure — never leave fees unusable.
       }
     }
     fetchRate()
@@ -279,12 +282,12 @@ export default function DEREv() {
 
       {data.banner && <Banner color={ACCENT} message={data.banner} testid="der-ev-banner" />}
       {error && <Banner color="#E94B4B" message={error} />}
-      {evRateMissing && (
+      {evRateIsDefault && (
         <div className="glass-card p-3 flex items-center gap-3"
-          style={{ borderColor: 'rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.08)' }}>
+          style={{ borderColor: 'rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)' }}>
           <Info size={15} style={{ color: '#F59E0B' }} />
-          <span className="text-white/80" style={{ fontSize: 12 }}>
-            EV tariff rate not configured — fees not shown until MDMS returns a rate for the EV owner class.
+          <span className="text-white/70" style={{ fontSize: 12 }}>
+            Using default EV tariff R {evRate.toFixed(2)}/kWh — will update when MDMS returns an EV-class rate.
           </span>
         </div>
       )}
