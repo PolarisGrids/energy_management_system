@@ -32,6 +32,8 @@ from app.models.reverse_flow import ReverseFlowEvent
 from app.models.virtual_object_group import VirtualObjectGroup
 from app.models.alarm_rule import AlarmRule, AlarmRuleFiring
 from app.models.notification_delivery import NotificationDelivery
+# Alert Management (2026-04-21) — site-type classification for MDMS consumers.
+from app.models.consumer_tag import ConsumerTag
 # Spec 018 W4.T6/T10 — AppBuilder versioned defs + scheduled reports.
 from app.models.app_builder import (
     AppDef,

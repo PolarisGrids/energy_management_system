@@ -4,6 +4,7 @@ import {
   Settings, LogOut, Radio, Cpu, FileText, Clapperboard,
   Building2, ChevronLeft, ChevronRight, Layers, BotMessageSquare,
   Thermometer, ShieldCheck, AlertOctagon,
+  ShieldAlert, AlertTriangle, Gauge,
 } from 'lucide-react'
 import useAuthStore from '@/stores/authStore'
 import { canAccessRoute } from '@/auth/permissions'
@@ -19,6 +20,15 @@ const NAV = [
   { label: 'DER Management',    icon: Zap,              path: '/der' },
   { label: 'Energy Monitoring', icon: Activity,         path: '/energy' },
   { label: 'Sensor Monitoring', icon: Thermometer,      path: '/sensors' },
+  {
+    label: 'Alert Management', icon: ShieldAlert,       path: '/alerts-mgmt',
+    children: [
+      { label: 'Groups',        icon: Layers,          path: '/alerts-mgmt/groups' },
+      { label: 'Rules',         icon: Zap,             path: '/alerts-mgmt/rules' },
+      { label: 'Subscriptions', icon: Bell,            path: '/alerts-mgmt/subscriptions' },
+      { label: 'Alerts',        icon: AlertTriangle,   path: '/alerts-mgmt/alerts' },
+    ],
+  },
   { label: 'HES Mirror',        icon: Radio,            path: '/hes' },
   { label: 'MDMS Mirror',       icon: Cpu,              path: '/mdms' },
   { label: 'NTL',               icon: ShieldCheck,      path: '/ntl' },

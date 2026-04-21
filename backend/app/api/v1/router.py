@@ -122,3 +122,11 @@ api_router.include_router(notifications.router,  prefix="/notifications", tags=[
 # {ok, data, source, as_of} envelope with source ∈ {mdms, ems-local, partial}.
 api_router.include_router(consumption_ep.router,   prefix="/consumption",        tags=["consumption"])
 api_router.include_router(devices_ep.router,       prefix="/devices",            tags=["devices"])
+
+# Alert Management (2026-04-21) — MDMS CIS consumers + local site-type tags +
+# default-groups seeder. Late-imported to mirror the dashboards / data-accuracy
+# pattern above so the top-level import block stays stable.
+from app.api.v1.endpoints import cis_consumers as cis_consumers_ep  # noqa: E402
+from app.api.v1.endpoints import alert_defaults as alert_defaults_ep  # noqa: E402
+api_router.include_router(cis_consumers_ep.router, prefix="/cis",                tags=["cis-consumers"])
+api_router.include_router(alert_defaults_ep.router, prefix="/alert-mgmt",        tags=["alert-mgmt"])

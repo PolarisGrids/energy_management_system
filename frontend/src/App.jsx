@@ -28,6 +28,8 @@ import SensorMonitoring from '@/pages/SensorMonitoring'
 import OutageManagement from '@/pages/OutageManagement'
 import OutageDetail from '@/pages/OutageDetail'
 import NTL from '@/pages/NTL'
+// Alert Management (2026-04-21) — virtual groups + rules + subscriptions + alerts
+import AlertManagement from '@/pages/AlertManagement'
 // Spec 018 W3.T11 — DER native dashboards + distribution room.
 import DERPv from '@/pages/DERPv'
 import DERPvDetail from '@/pages/DERPvDetail'
@@ -85,6 +87,8 @@ export default function App() {
             <Route path="app-builder"                    element={guard(P_APP_BUILDER_READ,   <AppBuilder />)} />
             <Route path="showcase"                       element={guard(P_DASHBOARD_READ,     <SMOCShowcase />)} />
             <Route path="sensors"                        element={guard(P_SENSOR_READ,        <SensorMonitoring />)} />
+            <Route path="alerts-mgmt"                    element={guard(P_ALARM_READ,         <AlertManagement />)} />
+            <Route path="alerts-mgmt/:tab"               element={guard(P_ALARM_READ,         <AlertManagement />)} />
             <Route path="audit"                          element={guard(P_AUDIT_READ,         <AuditLog />)} />
             <Route path="outages"                        element={guard(P_OUTAGE_READ,        <OutageManagement />)} />
             <Route path="outages/:id"                    element={guard(P_OUTAGE_READ,        <OutageDetail />)} />

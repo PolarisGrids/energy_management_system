@@ -32,6 +32,78 @@ from app.models.mdms import (
 )
 from app.core.security import get_password_hash
 
+
+def seed_alert_defaults(db):
+    """Alert Management (2026-04-21) — idempotently create the two default
+    virtual-object-groups (feeder meters, critical customers), tag a handful
+    of MDMS consumers as hospital/data_centre/fire_station, and wire two
+    starter alarm rules (P3 feeder power-cut → email+in-app; P1 critical →
+    email+SMS+in-app).
+
+    Safe to re-run: each upsert short-circuits if the named group/rule exists.
+    """
+    from app.api.v1.endpoints.alert_defaults import (
+        _seed_critical_tags,
+        _upsert_group,
+        _upsert_rule,
+        _FEEDER_GROUP_NAME,
+        _CRITICAL_GROUP_NAME,
+    )
+
+    owner_id = "seed-script"
+    tagged = _seed_critical_tags(db, owner_id)
+    feeder_group, _ = _upsert_group(
+        db, owner_id, _FEEDER_GROUP_NAME,
+        "All feeder-connected meters. Used for power-cut + voltage-deviation rules.",
+        {"hierarchy": {}, "filters": {}},
+    )
+    critical_group, _ = _upsert_group(
+        db, owner_id, _CRITICAL_GROUP_NAME,
+        "Hospitals, data centres, fire stations. Power-cut alarms go to customer email.",
+        {"hierarchy": {"site_types": ["hospital", "data_centre", "fire_station"]}, "filters": {}},
+    )
+    _upsert_rule(
+        db, owner_id,
+        name="Feeder Meters — Power-cut + Voltage Deviation",
+        description="Any power-cut, under/over-voltage on a feeder-side meter.",
+        group_id=feeder_group.id,
+        condition={
+            "source": "alarm_event", "field": "alarm_type", "op": "in",
+            "value": ["outage", "undervoltage", "overvoltage", "power_failure"],
+            "duration_seconds": 0,
+        },
+        action={
+            "channels": [
+                {"type": "in_app", "recipients": ["operations-desk"]},
+                {"type": "email", "recipients": ["noc@eskom.co.za"]},
+            ],
+            "priority": 3,
+        },
+        priority=3,
+    )
+    _upsert_rule(
+        db, owner_id,
+        name="Critical Customers — Power-cut Email/SMS",
+        description="P1 power-cut on a hospital / data-centre / fire-station meter.",
+        group_id=critical_group.id,
+        condition={
+            "source": "alarm_event", "field": "alarm_type", "op": "in",
+            "value": ["outage", "power_failure"], "duration_seconds": 0,
+        },
+        action={
+            "channels": [
+                {"type": "email", "recipients": ["critical-sites@eskom.co.za"]},
+                {"type": "sms", "recipients": ["+27100000000"]},
+                {"type": "in_app", "recipients": ["critical-desk"]},
+            ],
+            "priority": 1,
+        },
+        priority=1,
+    )
+    db.commit()
+    print(f"  Tagged {tagged} new consumers (critical sites).")
+
+
 # Alembic owns the schema (see Dockerfile CMD: `alembic upgrade head`).
 # We intentionally do NOT call `Base.metadata.create_all()` here — it races
 # with alembic on partitioned tables (der_telemetry, transformer_sensor_reading)
@@ -1525,6 +1597,9 @@ def main():
 
         print("Seeding MDMS data (VEE, consumers, tariffs, NTL, PQ)...")
         seed_mdms_data(db, meters, transformers)
+
+        print("Seeding Alert Management default groups + critical-customer tags...")
+        seed_alert_defaults(db)
 
         print("\nSeed complete!")
         print(f"  Users:       3 (admin/Admin@2026, supervisor/Super@2026, operator/Oper@2026)")

@@ -164,6 +164,22 @@ export const alarmRulesAPI = {
     api.post(`/alarm-rules/${id}/acknowledge`, { firing_id: firingId, note }),
 }
 
+// Alert Management (2026-04-21) — MDMS CIS consumers, site-type tags, default groups seed.
+export const alertMgmtAPI = {
+  // Consumers from MDMS db_cis.consumer_master_data overlayed with local site_type.
+  listConsumers: (params = {}) => api.get('/cis/consumers', { params }),
+  consumerStats: () => api.get('/cis/consumers/stats'),
+  consumerFeeders: () => api.get('/cis/consumers/feeders'),
+  // Site-type tag CRUD (PUT upserts keyed by meter_serial).
+  listTags: (params = {}) => api.get('/cis/tags', { params }),
+  upsertTag: (meterSerial, payload) => api.put(`/cis/tags/${meterSerial}`, payload),
+  deleteTag: (meterSerial) => api.delete(`/cis/tags/${meterSerial}`),
+  siteTypes: () => api.get('/cis/site-types'),
+  // Default-groups idempotent seeder (feeder-meters + critical-customers + two starter rules).
+  seedDefaults: () => api.post('/alert-mgmt/defaults'),
+  defaultsStatus: () => api.get('/alert-mgmt/defaults/status'),
+}
+
 // Simulation
 export const simulationAPI = {
   list: () => api.get('/simulation/'),
