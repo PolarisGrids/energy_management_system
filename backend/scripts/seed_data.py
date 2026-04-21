@@ -1591,8 +1591,39 @@ def seed_energy_savings(db, meters):
         return
     catalog = {c.code: c for c in db.query(ApplianceCatalog).all()}
     if not catalog:
-        print("  WARNING: appliance_catalog empty — alembic missing? Skipping.")
-        return
+        # Defensive backfill: the alembic migration populates appliance_catalog
+        # only when it creates the table. On environments where the table was
+        # created by an earlier migration and left empty (observed on dev),
+        # the prior behaviour was to silently skip and leave /energy-savings
+        # returning 404. Self-populate from the canonical list so the seed
+        # always completes.
+        _APPLIANCE_FALLBACK = [
+            ("ac_split_18k",   "ac",         "Split AC (18k BTU)",         1.80, 8.0, 2.0,
+             "Residential split-unit AC — lightly shiftable (pre-cool off-peak)."),
+            ("ac_central_5hp", "ac",         "Central AC (5 HP)",          3.70, 6.0, 1.5,
+             "Commercial central AC — partial pre-cool possible."),
+            ("water_pump_1hp", "water_pump", "Booster pump (1 HP)",        0.75, 4.0, 3.0,
+             "Domestic booster pump — fully shiftable via tank/storage."),
+            ("water_pump_5hp", "water_pump", "Farm water pump (5 HP)",     3.70, 6.0, 5.0,
+             "Irrigation pump — highly shiftable (schedule off-peak)."),
+            ("ev_charger_l2",  "ev_charger", "EV charger (Level 2, 7 kW)", 7.00, 3.0, 3.0,
+             "Overnight EV charging is a poster-child load-shift."),
+            ("ev_charger_dc",  "ev_charger", "DC fast charger (50 kW)",    50.00, 1.5, 0.5,
+             "DC fast session — partially shiftable via session scheduling."),
+            ("geyser_3kw",     "geyser",     "Geyser (3 kW)",              3.00, 3.5, 3.0,
+             "Electric hot-water cylinder — ripple control / timer friendly."),
+            ("lighting_led",   "lighting",   "LED lighting bank (0.5 kW)", 0.50, 5.0, 0.5,
+             "Lighting load — small shift only."),
+        ]
+        for code, cat_name, dn, kw, rh, sh, desc in _APPLIANCE_FALLBACK:
+            db.add(ApplianceCatalog(
+                code=code, category=cat_name, display_name=dn,
+                typical_kw=kw, typical_running_hours=rh,
+                shiftable_hours=sh, description=desc,
+            ))
+        db.commit()
+        catalog = {c.code: c for c in db.query(ApplianceCatalog).all()}
+        print(f"  appliance_catalog backfilled: {len(catalog)} rows")
     import uuid as _uuid
     def _new_id() -> str:
         return str(_uuid.uuid4())
