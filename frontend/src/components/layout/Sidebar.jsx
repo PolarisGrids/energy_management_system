@@ -45,6 +45,7 @@ const NAV = [
   { label: 'HES Mirror',        icon: Radio,            path: '/hes' },
   { label: 'MDMS Mirror',       icon: Cpu,              path: '/mdms' },
   { label: 'NTL',               icon: ShieldCheck,      path: '/ntl' },
+  { label: 'Theft Analysis',    icon: ShieldAlert,      path: '/theft' },
   { label: 'Data Accuracy',     icon: ShieldCheck,      path: '/data-accuracy' },
   { label: 'Simulations',       icon: Clapperboard,     path: '/simulation' },
   { label: 'Reports',           icon: BarChart2,        path: '/reports' },

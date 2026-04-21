@@ -389,6 +389,15 @@ export const slaAPI = {
   kpis: () => api.get('/sla/kpis'),
 }
 
+// ─── Theft Analysis (2026-04-21) — MDMS-sourced NTL scoring per meter ──
+// Rankings, drill-downs, detector breakdown, manual recompute.
+export const theftAPI = {
+  summary: () => api.get('/theft/summary'),
+  meters: (params) => api.get('/theft/meters', { params }),
+  meter: (deviceId, params) => api.get(`/theft/meters/${encodeURIComponent(deviceId)}`, { params }),
+  recompute: () => api.post('/theft/recompute'),
+}
+
 // ─── Data Accuracy console (spec 018 W4.T14) ──
 export const dataAccuracyAPI = {
   list: (params) => api.get('/data-accuracy', { params }),

@@ -131,6 +131,21 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # pragma: no cover
             log.error("failed to start der_sim: %s", exc)
 
+    # Theft-analysis scorer — refreshes theft_score rows from MDMS every 15 min.
+    # Requires MDMS_VALIDATION_DB_URL; when unset the scorer no-ops gracefully.
+    theft_task: "asyncio.Task | None" = None
+    theft_stop = asyncio.Event()
+    if os.getenv("THEFT_SCORER_ENABLED", "1") != "0":
+        try:
+            from app.services.theft_analysis.runner import run_refresh_loop
+
+            theft_task = asyncio.create_task(
+                run_refresh_loop(theft_stop), name="theft-scorer"
+            )
+            log.info("theft scorer started")
+        except Exception as exc:  # pragma: no cover
+            log.error("failed to start theft scorer: %s", exc)
+
     try:
         yield
     finally:
@@ -147,6 +162,7 @@ async def lifespan(app: FastAPI):
             (reliability_task, reliability_stop, "reliability-refresh"),
             (source_status_task, source_status_stop, "source-status-refresher"),
             (der_sim_task, der_sim_stop, "der-sim"),
+            (theft_task, theft_stop, "theft-scorer"),
         ):
             if task is None:
                 continue

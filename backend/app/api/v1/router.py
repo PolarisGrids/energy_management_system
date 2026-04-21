@@ -139,3 +139,7 @@ api_router.include_router(energy_savings_ep.router, prefix="/energy-savings",   
 # SLA per metrology profile (Billing / Daily Load / Blockload) plus device counts.
 from app.api.v1.endpoints import sla as sla_ep  # noqa: E402
 api_router.include_router(sla_ep.router, prefix="/sla", tags=["sla"])
+
+# Theft Analysis (2026-04-21) — MDMS-sourced NTL scoring per meter.
+from app.api.v1.endpoints import theft as theft_ep  # noqa: E402
+api_router.include_router(theft_ep.router, prefix="/theft", tags=["theft"])

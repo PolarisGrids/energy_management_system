@@ -52,3 +52,5 @@ from app.models.energy_savings import (
     ApplianceUsage,
     TouTariff,
 )
+# Theft Analysis (2026-04-21) — MDMS-sourced NTL scoring snapshot.
+from app.models.theft import TheftScore, TheftRunLog

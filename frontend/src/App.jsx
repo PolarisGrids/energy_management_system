@@ -33,6 +33,8 @@ import LVAlerts from '@/pages/LVAlerts'
 import OutageManagement from '@/pages/OutageManagement'
 import OutageDetail from '@/pages/OutageDetail'
 import NTL from '@/pages/NTL'
+// Theft Analysis (2026-04-21) — MDMS-sourced per-meter NTL scoring page.
+import TheftAnalysis from '@/pages/TheftAnalysis'
 // Alert Management (2026-04-21) — virtual groups + rules + subscriptions + alerts
 import AlertManagement from '@/pages/AlertManagement'
 // Spec 018 W3.T11 — DER native dashboards + distribution room.
@@ -108,6 +110,7 @@ export default function App() {
             <Route path="outages"                        element={guard(P_OUTAGE_READ,        <OutageManagement />)} />
             <Route path="outages/:id"                    element={guard(P_OUTAGE_READ,        <OutageDetail />)} />
             <Route path="ntl"                            element={guard(P_NTL_READ,           <NTL />)} />
+            <Route path="theft"                          element={guard(P_NTL_READ,           <TheftAnalysis />)} />
             <Route path="data-accuracy"                  element={guard(P_DATA_ACCURACY_READ, <DataAccuracy />)} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
