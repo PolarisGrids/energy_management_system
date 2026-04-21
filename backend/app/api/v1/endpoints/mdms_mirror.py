@@ -15,7 +15,16 @@ router = APIRouter()
 
 @router.get("/vee/summary")
 def vee_summary(days: int = Query(7, le=30), db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = db.query(VEEDailySummary).order_by(VEEDailySummary.date).limit(days).all()
+    # Must sort desc first so `limit(days)` grabs the N newest rows, then
+    # reverse back to ascending for the chart. The earlier `order_by(date)`
+    # pulled the OLDEST rows and masked recent VEE activity.
+    rows = (
+        db.query(VEEDailySummary)
+        .order_by(desc(VEEDailySummary.date))
+        .limit(days)
+        .all()
+    )
+    rows = list(reversed(rows))
     return {"days": [r.date.strftime("%d %b") for r in rows],
             "validated": [r.validated_count for r in rows],
             "estimated": [r.estimated_count for r in rows],
