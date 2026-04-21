@@ -27,6 +27,9 @@ import AppBuilder from '@/pages/AppBuilder'
 import SMOCShowcase from '@/pages/SMOCShowcase'
 import AuditLog from '@/pages/AuditLog'
 import SensorMonitoring from '@/pages/SensorMonitoring'
+// LV transformer monitoring — rule builder + alerts view scoped to DTR meters
+import LVAlertRules from '@/pages/LVAlertRules'
+import LVAlerts from '@/pages/LVAlerts'
 import OutageManagement from '@/pages/OutageManagement'
 import OutageDetail from '@/pages/OutageDetail'
 import NTL from '@/pages/NTL'
@@ -91,6 +94,8 @@ export default function App() {
             <Route path="app-builder"                    element={guard(P_APP_BUILDER_READ,   <AppBuilder />)} />
             <Route path="showcase"                       element={guard(P_DASHBOARD_READ,     <SMOCShowcase />)} />
             <Route path="sensors"                        element={guard(P_SENSOR_READ,        <SensorMonitoring />)} />
+            <Route path="sensors/rules"                  element={guard(P_ALARM_READ,         <LVAlertRules />)} />
+            <Route path="sensors/alerts"                 element={guard(P_ALARM_READ,         <LVAlerts />)} />
             <Route path="alerts-mgmt"                    element={guard(P_ALARM_READ,         <AlertManagement />)} />
             <Route path="alerts-mgmt/:tab"               element={guard(P_ALARM_READ,         <AlertManagement />)} />
             <Route path="audit"                          element={guard(P_AUDIT_READ,         <AuditLog />)} />

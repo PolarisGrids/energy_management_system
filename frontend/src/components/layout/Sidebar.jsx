@@ -19,7 +19,13 @@ const NAV = [
   { label: 'Outages',           icon: AlertOctagon,     path: '/outages' },
   { label: 'DER Management',    icon: Zap,              path: '/der' },
   { label: 'Energy Monitoring', icon: Activity,         path: '/energy' },
-  { label: 'Sensor Monitoring', icon: Thermometer,      path: '/sensors' },
+  {
+    label: 'Sensor Monitoring', icon: Thermometer,      path: '/sensors',
+    children: [
+      { label: 'Rules',         icon: Gauge,           path: '/sensors/rules' },
+      { label: 'Alerts',        icon: AlertTriangle,   path: '/sensors/alerts' },
+    ],
+  },
   {
     label: 'Alert Management', icon: ShieldAlert,       path: '/alerts-mgmt',
     children: [
@@ -45,11 +51,19 @@ const NAV = [
 
 export default function Sidebar() {
   const { user, logout, permissions } = useAuthStore()
+  const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
 
   // Spec 018 W4.T12 — hide menu items the user cannot reach. Items that are
   // merely read-restricted (e.g. /hes for analyst) disappear entirely.
-  const visibleNav = NAV.filter((item) => canAccessRoute(permissions, item.path))
+  // Children are independently permission-filtered so a user with read access
+  // on a parent but not a child still sees the parent without the sub-item.
+  const visibleNav = NAV
+    .filter((item) => canAccessRoute(permissions, item.path))
+    .map((item) => ({
+      ...item,
+      children: (item.children || []).filter(c => canAccessRoute(permissions, c.path)),
+    }))
 
   return (
     <aside
@@ -82,20 +96,44 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
-        {visibleNav.map(({ label, icon: Icon, path }) => (
-          <NavLink
-            key={path}
-            to={path}
-            end={path === '/'}
-            className={({ isActive }) =>
-              `nav-item ${isActive ? 'active' : ''}`
-            }
-            title={collapsed ? label : undefined}
-          >
-            <Icon size={16} className="shrink-0" />
-            {!collapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
+        {visibleNav.map(({ label, icon: Icon, path, children }) => {
+          const parentActive = location.pathname === path ||
+            (path !== '/' && location.pathname.startsWith(path + '/')) ||
+            (children || []).some(c => location.pathname === c.path || location.pathname.startsWith(c.path + '/'))
+          const showChildren = !collapsed && children && children.length > 0 && parentActive
+          return (
+            <div key={path} className="flex flex-col">
+              <NavLink
+                to={path}
+                end={path === '/'}
+                className={({ isActive }) =>
+                  `nav-item ${isActive ? 'active' : ''}`
+                }
+                title={collapsed ? label : undefined}
+              >
+                <Icon size={16} className="shrink-0" />
+                {!collapsed && <span>{label}</span>}
+              </NavLink>
+              {showChildren && (
+                <div className="flex flex-col gap-0.5 ml-6 mt-0.5 mb-1">
+                  {children.map(({ label: clabel, icon: CIcon, path: cpath }) => (
+                    <NavLink
+                      key={cpath}
+                      to={cpath}
+                      className={({ isActive }) =>
+                        `nav-item ${isActive ? 'active' : ''}`
+                      }
+                      style={{ fontSize: 12, paddingTop: 6, paddingBottom: 6 }}
+                    >
+                      <CIcon size={12} className="shrink-0" />
+                      <span>{clabel}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </nav>
 
       {/* User */}

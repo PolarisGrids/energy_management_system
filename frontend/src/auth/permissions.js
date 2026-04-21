@@ -96,6 +96,8 @@ export const ROUTE_PERMISSIONS = {
   '/distribution':    P_DER_READ,
   '/energy':          P_ENERGY_READ,
   '/sensors':         P_SENSOR_READ,
+  '/sensors/rules':   P_ALARM_READ,
+  '/sensors/alerts':  P_ALARM_READ,
   '/alerts-mgmt':                P_ALARM_READ,
   '/alerts-mgmt/groups':         P_ALARM_READ,
   '/alerts-mgmt/rules':          P_ALARM_READ,
