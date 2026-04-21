@@ -241,7 +241,11 @@ export default function DERPvDetail() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {inverters.map((inv) => (
-              <InverterCard key={inv.id} inverter={inv} />
+              <InverterCard
+                key={inv.id}
+                inverter={inv}
+                onClick={() => navigate(`/der/inverters/${encodeURIComponent(inv.id)}`)}
+              />
             ))}
           </div>
         )}
@@ -326,7 +330,7 @@ function Banner({ message, color, testid }) {
   )
 }
 
-function InverterCard({ inverter }) {
+function InverterCard({ inverter, onClick }) {
   const status = (inverter.status || '').toLowerCase()
   const badgeClass =
     status === 'online'
@@ -337,7 +341,14 @@ function InverterCard({ inverter }) {
       ? 'badge-medium'
       : 'badge-low'
   return (
-    <div className="glass-card p-4" data-testid={`der-inverter-card-${inverter.id}`}>
+    <div
+      className="glass-card p-4 cursor-pointer hover:brightness-110 transition"
+      data-testid={`der-inverter-card-${inverter.id}`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onClick) onClick() }}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <div

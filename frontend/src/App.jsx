@@ -42,6 +42,7 @@ import DERBess from '@/pages/DERBess'
 import DERBessDetail from '@/pages/DERBessDetail'
 import DEREv from '@/pages/DEREv'
 import DEREvDetail from '@/pages/DEREvDetail'
+import DERInverterDetail from '@/pages/DERInverterDetail'
 import DistributionRoom from '@/pages/DistributionRoom'
 // Spec 018 W3.T15 — solar-overvoltage scenario round-trip runner.
 import SolarOvervoltageRunner from '@/pages/SolarOvervoltageRunner'
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="der/bess/:assetId"              element={guard(P_DER_READ,           <DERBessDetail />)} />
             <Route path="der/ev"                         element={guard(P_DER_READ,           <DEREv />)} />
             <Route path="der/ev/:assetId"                element={guard(P_DER_READ,           <DEREvDetail />)} />
+            <Route path="der/inverters/:inverterId"      element={guard(P_DER_READ,           <DERInverterDetail />)} />
             <Route path="distribution"                   element={guard(P_DER_READ,           <DistributionRoom />)} />
             <Route path="energy"                         element={guard(P_ENERGY_READ,        <EnergyMonitoring />)} />
             <Route path="hes"                            element={guard(P_HES_READ,           <HESMirror />)} />

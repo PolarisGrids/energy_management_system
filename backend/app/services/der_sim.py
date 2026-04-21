@@ -191,11 +191,83 @@ def _flush(db: Session, rows: list[dict]) -> None:
 
 # ── Back-fill ──────────────────────────────────────────────────────────────────
 
+def _ensure_inverters_for_pv(db: Session) -> int:
+    """Create one inverter per PV asset that has none (demo data).
+
+    Returns the number of inverters created.
+    """
+    import uuid as _uuid
+
+    rows = db.execute(text("""
+        SELECT a.id, COALESCE(a.capacity_kw, 5)::float AS cap_kw, a.name
+        FROM der_asset a
+        WHERE a.type = 'pv'
+          AND NOT EXISTS (SELECT 1 FROM der_inverter i WHERE i.asset_id = a.id)
+    """)).fetchall()
+
+    if not rows:
+        return 0
+
+    makers = [
+        ("SMA", "STP 25000-TL", "three", "Modbus/TCP", "3.21.12.R"),
+        ("Huawei", "SUN2000-33KTL", "three", "Modbus/TCP", "V100R001C10"),
+        ("ABB", "TRIO-TM-50.0", "three", "SunSpec", "2.4.1"),
+        ("Fronius", "Symo 20.0-3-M", "three", "Modbus/TCP", "3.14.1-2"),
+        ("SolarEdge", "SE27.6K", "three", "Modbus/TCP", "4.13.33"),
+    ]
+
+    today = date.today()
+    for asset_id, cap_kw, _name in rows:
+        seed = abs(hash(asset_id)) % 10_000
+        rng = random.Random(seed)
+        mfr, model, phase, comms, fw = rng.choice(makers)
+        inv_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"inv-{asset_id}"))
+        sn = f"{mfr[:3].upper()}-{asset_id}-{seed % 1000:03d}"
+        rated_ac = round(float(cap_kw) * rng.uniform(0.95, 1.00), 2)
+        rated_dc = round(rated_ac * rng.uniform(1.03, 1.10), 2)
+        installed = today - timedelta(days=rng.randint(180, 1095))
+        warranty = installed + timedelta(days=365 * 5)
+
+        try:
+            db.execute(text("""
+                INSERT INTO der_inverter
+                    (id, asset_id, manufacturer, model, serial_number,
+                     firmware_version, rated_ac_kw, rated_dc_kw,
+                     num_mppt_trackers, num_strings, phase_config,
+                     ac_voltage_nominal_v, comms_protocol,
+                     installation_date, warranty_expires, status)
+                VALUES
+                    (:id, :asset_id, :mfr, :model, :sn, :fw,
+                     :rated_ac, :rated_dc, :mppt, :strings, :phase,
+                     400.0, :comms, :installed, :warranty, 'online')
+                ON CONFLICT (serial_number) DO NOTHING
+            """), {
+                "id": inv_id, "asset_id": asset_id, "mfr": mfr, "model": model,
+                "sn": sn, "fw": fw, "rated_ac": rated_ac, "rated_dc": rated_dc,
+                "mppt": rng.randint(2, 4), "strings": rng.randint(6, 16),
+                "phase": phase, "comms": comms,
+                "installed": installed, "warranty": warranty,
+            })
+        except Exception:
+            db.rollback()
+    db.commit()
+    log.info("der_sim: ensured %d inverters for PV assets without any", len(rows))
+    return len(rows)
+
+
 def backfill(db: Session) -> int:
     """Fill 30 days of history for every asset that has no data in the last 2h.
 
-    Returns number of assets back-filled.
+    Returns number of assets back-filled. Also ensures every PV asset has at
+    least one inverter registered (demo data).
     """
+    # Make sure PV assets have inverters registered (demo data).
+    try:
+        _ensure_inverters_for_pv(db)
+    except Exception as exc:
+        log.error("der_sim: inverter ensure error: %s", exc)
+        db.rollback()
+
     now = _aligned_now()
     cutoff_stale = now - timedelta(hours=2)
     start = now - timedelta(days=HISTORY_DAYS)
