@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Sun, Battery, Car, GitMerge, Zap, Activity, TrendingUp,
   Power, PowerOff, Sliders, AlertTriangle, CheckCircle,
@@ -133,33 +134,33 @@ const makeGaugeOption = (value, max, label, colorFn) => ({
 // ─── TABS ─────────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'overview',  label: 'Overview',      icon: Activity },
-  { id: 'pv',        label: 'PV Solar',       icon: Sun },
-  { id: 'bess',      label: 'BESS Storage',   icon: Battery },
-  { id: 'ev',        label: 'EV Charging',    icon: Car },
-  { id: 'microgrid', label: 'Microgrid',      icon: GitMerge },
+  { id: 'overview', label: 'Overview',     icon: Activity },
+  { id: 'pv',       label: 'PV Solar',     icon: Sun },
+  { id: 'bess',     label: 'BESS Storage', icon: Battery },
+  { id: 'ev',       label: 'EV Charging',  icon: Car },
 ]
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({ assets, onCommand, cmdLoading }) {
+  const navigate = useNavigate()
   const pvAssets    = assets.filter(a => a.asset_type === 'pv')
   const bessAssets  = assets.filter(a => a.asset_type === 'bess')
   const evAssets    = assets.filter(a => a.asset_type === 'ev_charger')
   const mgAssets    = assets.filter(a => a.asset_type === 'microgrid')
 
   const groups = [
-    { key: 'pv',        label: 'PV Solar',       icon: Sun,      color: '#F59E0B', items: pvAssets },
-    { key: 'bess',      label: 'BESS',            icon: Battery,  color: '#56CCF2', items: bessAssets },
-    { key: 'ev_charger',label: 'EV Charging',     icon: Car,      color: '#02C9A8', items: evAssets },
-    { key: 'microgrid', label: 'Microgrid',       icon: GitMerge, color: '#ABC7FF', items: mgAssets },
+    { key: 'pv',        label: 'PV Solar',   icon: Sun,      color: '#F59E0B', items: pvAssets,   route: '/der/pv' },
+    { key: 'bess',      label: 'BESS',        icon: Battery,  color: '#56CCF2', items: bessAssets, route: '/der/bess' },
+    { key: 'ev_charger',label: 'EV Charging', icon: Car,      color: '#02C9A8', items: evAssets,   route: '/der/ev' },
+    { key: 'microgrid', label: 'Microgrid',   icon: GitMerge, color: '#ABC7FF', items: mgAssets,   route: null },
   ]
 
   return (
     <div className="space-y-6">
       {/* Asset group cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {groups.map(({ key, label, icon: Icon, color, items }) => {
+        {groups.map(({ key, label, icon: Icon, color, items, route }) => {
           const asset = items[0]
           if (!asset) return (
             <div key={key} className="glass-card p-5 flex flex-col items-center justify-center gap-2" style={{ minHeight: 160 }}>
@@ -171,7 +172,11 @@ function OverviewTab({ assets, onCommand, cmdLoading }) {
             ? (asset.current_output_kw / asset.rated_capacity_kw) * 100 : 0
 
           return (
-            <div key={key} className="glass-card p-5 flex flex-col gap-3">
+            <div key={key}
+              className="glass-card p-5 flex flex-col gap-3"
+              onClick={() => route && navigate(route)}
+              style={{ cursor: route ? 'pointer' : 'default' }}
+            >
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                   style={{ background: `${color}20` }}>
@@ -857,6 +862,7 @@ function MicrogridTab({ assets, onCommand, cmdLoading }) {
 
 export default function DERManagement() {
   const { user } = useAuthStore()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('overview')
   const [assets, setAssets] = useState([])
   const [loading, setLoading] = useState(true)
@@ -941,31 +947,37 @@ export default function DERManagement() {
 
       {/* Tab bar */}
       <div className="glass-card p-1 flex gap-1 overflow-x-auto">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-semibold transition-all whitespace-nowrap"
-            style={{
-              fontSize: 13,
-              background: activeTab === id ? 'rgba(2,201,168,0.15)' : 'transparent',
-              color: activeTab === id ? '#02C9A8' : 'rgba(255,255,255,0.5)',
-              borderBottom: activeTab === id ? '2px solid #02C9A8' : '2px solid transparent',
-            }}
-          >
-            <Icon size={14} />
-            {label}
-            {id !== 'overview' && (
-              <span style={{
-                fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10,
-                background: activeTab === id ? 'rgba(2,201,168,0.2)' : 'rgba(255,255,255,0.06)',
-                color: activeTab === id ? '#02C9A8' : 'rgba(255,255,255,0.3)',
-              }}>
-                {id === 'pv' ? pvAssets.length : id === 'bess' ? bessAssets.length : id === 'ev' ? evAssets.length : mgAssets.length}
-              </span>
-            )}
-          </button>
-        ))}
+        {TABS.map(({ id, label, icon: Icon }) => {
+          const fleetRoute = id === 'pv' ? '/der/pv' : id === 'bess' ? '/der/bess' : id === 'ev' ? '/der/ev' : null
+          return (
+            <button
+              key={id}
+              onClick={() => fleetRoute ? navigate(fleetRoute) : setActiveTab(id)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-semibold transition-all whitespace-nowrap"
+              style={{
+                fontSize: 13,
+                background: activeTab === id ? 'rgba(2,201,168,0.15)' : 'transparent',
+                color: activeTab === id ? '#02C9A8' : 'rgba(255,255,255,0.5)',
+                borderBottom: activeTab === id ? '2px solid #02C9A8' : '2px solid transparent',
+              }}
+            >
+              <Icon size={14} />
+              {label}
+              {id !== 'overview' && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10,
+                  background: activeTab === id ? 'rgba(2,201,168,0.2)' : 'rgba(255,255,255,0.06)',
+                  color: activeTab === id ? '#02C9A8' : 'rgba(255,255,255,0.3)',
+                }}>
+                  {id === 'pv' ? pvAssets.length : id === 'bess' ? bessAssets.length : id === 'ev' ? evAssets.length : mgAssets.length}
+                </span>
+              )}
+              {fleetRoute && (
+                <ChevronRight size={12} style={{ color: 'rgba(255,255,255,0.3)' }} />
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/* Tab content */}

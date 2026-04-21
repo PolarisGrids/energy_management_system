@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Radio, Cpu, FileText, Clapperboard,
   Building2, ChevronLeft, ChevronRight, Layers, BotMessageSquare,
   Thermometer, ShieldCheck, AlertOctagon,
-  ShieldAlert, AlertTriangle, Gauge,
+  ShieldAlert, AlertTriangle, Gauge, Sun, Battery, Car,
 } from 'lucide-react'
 import useAuthStore from '@/stores/authStore'
 import { canAccessRoute } from '@/auth/permissions'
@@ -17,7 +17,14 @@ const NAV = [
   { label: 'GIS Map',           icon: Map,              path: '/gis' },
   { label: 'Alarms',            icon: Bell,             path: '/alarms' },
   { label: 'Outages',           icon: AlertOctagon,     path: '/outages' },
-  { label: 'DER Management',    icon: Zap,              path: '/der' },
+  {
+    label: 'DER Management',    icon: Zap,              path: '/der',
+    children: [
+      { label: 'PV Solar',      icon: Sun,              path: '/der/pv' },
+      { label: 'BESS Storage',  icon: Battery,          path: '/der/bess' },
+      { label: 'EV Charging',   icon: Car,              path: '/der/ev' },
+    ],
+  },
   { label: 'Energy Monitoring', icon: Activity,         path: '/energy' },
   {
     label: 'Sensor Monitoring', icon: Thermometer,      path: '/sensors',

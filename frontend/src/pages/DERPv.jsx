@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, CheckCircle, Gauge, RefreshCw,
+  AlertTriangle, CheckCircle, Cpu, Gauge, RefreshCw,
   TrendingUp, Users, Wifi, WifiOff, Zap,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
@@ -28,6 +28,18 @@ const fmt = (v, d = 1) =>
 // Achievement → traffic-light colour for the column cell.
 const achColor = (v) =>
   v == null ? '#ABC7FF' : v >= 80 ? '#02C9A8' : v >= 60 ? '#F59E0B' : '#E94B4B'
+
+// Inverter equipment status → badge class + colour.
+const invStatusMeta = (s) => {
+  switch ((s || '').toLowerCase()) {
+    case 'online':        return { cls: 'badge-ok',       color: '#02C9A8' }
+    case 'fault':         return { cls: 'badge-critical',  color: '#E94B4B' }
+    case 'maintenance':   return { cls: 'badge-medium',    color: '#F59E0B' }
+    case 'commissioning': return { cls: 'badge-info',      color: '#56CCF2' }
+    case 'offline':       return { cls: 'badge-low',       color: '#6B7280' }
+    default:              return { cls: 'badge-low',       color: '#6B7280' }
+  }
+}
 
 export default function DERPv() {
   const navigate = useNavigate()
@@ -224,6 +236,22 @@ export default function DERPv() {
             <span className={online ? 'badge-ok' : r.state ? 'badge-medium' : 'badge-low'}>
               {online ? <Wifi size={10} /> : <WifiOff size={10} />}
               <span className="ml-1">{r.state || 'unknown'}</span>
+            </span>
+          )
+        },
+      },
+      {
+        key: 'inverter_status',
+        label: 'Inverter',
+        render: (r) => {
+          if (!r.inverter_status) {
+            return <span className="text-white/25 font-mono" style={{ fontSize: 11 }}>—</span>
+          }
+          const { cls } = invStatusMeta(r.inverter_status)
+          return (
+            <span className={cls}>
+              <Cpu size={10} />
+              <span className="ml-1">{r.inverter_status}</span>
             </span>
           )
         },

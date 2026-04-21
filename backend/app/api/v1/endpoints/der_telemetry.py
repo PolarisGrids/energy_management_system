@@ -25,6 +25,7 @@ from app.core.deps import get_current_user
 from app.db.base import get_db
 from app.models.der_consumer import DERConsumer
 from app.models.der_ems import DERAssetEMS
+from app.models.der_inverter import DERInverter
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class DERAssetLatest(BaseModel):
     curtailment_pct: Optional[float] = None
     state: Optional[str] = None
     inverter_online: Optional[bool] = None
+    inverter_status: Optional[str] = None  # equipment status from der_inverter (first inverter)
     session_energy_kwh: Optional[float] = None
 
 
@@ -247,6 +249,35 @@ def get_der_telemetry(
     asset_rows = [r[0] for r in rows]
     consumer_by_asset = {r[0].id: r[1] for r in rows if r[1] is not None}
 
+    # ── First inverter status per asset (batch, single query) ──────────────
+    # PV assets typically have one inverter; take the earliest-registered one.
+    # Works on PostgreSQL and SQLite ≥3.25 (ROW_NUMBER is SQL-standard).
+    try:
+        from sqlalchemy import func as _fn_inv
+        _inv_subq = (
+            db.query(
+                DERInverter.asset_id,
+                DERInverter.status,
+                _fn_inv.row_number()
+                .over(
+                    partition_by=DERInverter.asset_id,
+                    order_by=DERInverter.created_at,
+                )
+                .label("rn"),
+            )
+            .filter(DERInverter.asset_id.in_([a.id for a in asset_rows]))
+            .subquery()
+        )
+        _inv_rows = (
+            db.query(_inv_subq.c.asset_id, _inv_subq.c.status)
+            .filter(_inv_subq.c.rn == 1)
+            .all()
+        )
+        inverter_status_by_asset: dict = {r[0]: r[1] for r in _inv_rows}
+    except Exception as exc:
+        logger.warning("inverter status batch query failed: %s", exc)
+        inverter_status_by_asset = {}
+
     if not asset_rows:
         return DERTelemetryResponse(
             type=type, window=window, asset_id=asset_id, assets=[], aggregate=[],
@@ -282,6 +313,7 @@ def get_der_telemetry(
                     capacity_kw=float(a.capacity_kw) if a.capacity_kw is not None else None,
                     capacity_kwh=float(a.capacity_kwh) if a.capacity_kwh is not None else None,
                     consumer=_consumer_inline(a.id),
+                    inverter_status=inverter_status_by_asset.get(a.id),
                 )
             )
         return DERTelemetryResponse(
@@ -336,6 +368,7 @@ def get_der_telemetry(
                     capacity_kw=float(a.capacity_kw) if a.capacity_kw is not None else None,
                     capacity_kwh=float(a.capacity_kwh) if a.capacity_kwh is not None else None,
                     consumer=_consumer_inline(a.id),
+                    inverter_status=inverter_status_by_asset.get(a.id),
                 )
             )
             continue
@@ -356,6 +389,7 @@ def get_der_telemetry(
                 curtailment_pct=float(cp) if cp is not None else None,
                 state=st,
                 inverter_online=(st or "").lower() in ("online", "running", "charging", "discharging") if st else None,
+                inverter_status=inverter_status_by_asset.get(a.id),
                 session_energy_kwh=float(se) if se is not None else None,
             )
         )
