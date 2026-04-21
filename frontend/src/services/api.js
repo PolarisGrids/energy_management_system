@@ -244,6 +244,12 @@ export const gisAPI = {
     api.get('/gis/layers', { params: { layer, bbox, limit } }),
   heatmapAlarms: (bbox, gridDeg = 0.1) =>
     api.get('/gis/heatmap/alarms', { params: { bbox, grid_deg: gridDeg } }),
+  // 8-level admin hierarchy drill-down
+  hierarchyTree: (parentId) =>
+    api.get('/gis/hierarchy/tree', { params: parentId ? { parent_id: parentId } : {} }),
+  hierarchyBoundaries: () => api.get('/gis/hierarchy/boundaries'),
+  hierarchyCommand: (cmd, nodeId) =>
+    api.post('/gis/hierarchy/command', { cmd, node_id: nodeId }),
 }
 
 // ─── NTL (spec 018 W3.T8/T9/T10) — suspects + energy-balance dashboard ───────
@@ -311,6 +317,8 @@ const _withPublishRole = (role) =>
   role ? { headers: { 'X-User-Role': role } } : {}
 
 export const appBuilderAPI = {
+  // Widget data-source catalog (spec 018 W4 extension).
+  listWidgetSources: () => api.get('/widget-sources'),
   // Apps
   listApps: (params) => api.get('/apps', { params }),
   getApp: (slug) => api.get(`/apps/${slug}`),

@@ -82,6 +82,7 @@ api_router.include_router(alarm_rules_ep.router,   prefix="/alarm-rules",       
 api_router.include_router(app_builder_ep.apps_router)
 api_router.include_router(app_builder_ep.rules_router)
 api_router.include_router(app_builder_ep.algos_router)
+api_router.include_router(app_builder_ep.widget_sources_router)
 
 # Spec 018 W4.T9 — MDMS EGSM reports proxy under /api/v1/reports/egsm/*.
 # Kept distinct from the legacy /reports router which serves local EMS reports.

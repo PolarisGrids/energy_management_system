@@ -3,6 +3,9 @@ import { Play, SkipForward, RotateCcw, Terminal, Zap, AlertTriangle, CheckCircle
 import { simulationAPI, derAPI, metersAPI } from '@/services/api'
 import FaultTopology from '@/components/simulation/FaultTopology'
 import SensorDashboard from '@/components/simulation/SensorDashboard'
+import SolarOvervoltageViz from '@/components/simulation/SolarOvervoltageViz'
+import EvChargingViz from '@/components/simulation/EvChargingViz'
+import MicrogridViz from '@/components/simulation/MicrogridViz'
 
 const TYPE_LABEL = {
   solar_overvoltage: 'REQ-21 · Solar Overvoltage',
@@ -126,8 +129,9 @@ export default function SimulationPage() {
         ))}
       </div>
 
-      {/* Main panel */}
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+      {/* Main panel — overflow-y-auto so the sample-design sim viz (which is
+          taller than the viewport) scrolls cleanly. */}
+      <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-h-0">
         {active ? (
           <>
             {/* Scenario header */}
@@ -195,6 +199,34 @@ export default function SimulationPage() {
             {/* Fault Topology Diagram — only for network_fault scenario */}
             {active.scenario_type === 'network_fault' && active.status === 'running' && currentStep && (
               <FaultTopology
+                scenario={active}
+                currentStep={active.current_step}
+                networkState={currentState}
+              />
+            )}
+
+            {/* Solar droop-curtailment viz — only for solar_overvoltage scenario */}
+            {active.scenario_type === 'solar_overvoltage' && active.status === 'running' && currentStep && (
+              <SolarOvervoltageViz
+                scenario={active}
+                currentStep={active.current_step}
+                networkState={currentState}
+              />
+            )}
+
+            {/* EV fast-charge hub viz — only for ev_fast_charging scenario */}
+            {active.scenario_type === 'ev_fast_charging' && active.status === 'running' && currentStep && (
+              <EvChargingViz
+                scenario={active}
+                currentStep={active.current_step}
+                networkState={currentState}
+                onCommand={(cmd) => sendCmd(cmd.command, cmd.target_id, cmd.value)}
+              />
+            )}
+
+            {/* Peaking microgrid / VPP viz — only for peaking_microgrid scenario */}
+            {active.scenario_type === 'peaking_microgrid' && active.status === 'running' && currentStep && (
+              <MicrogridViz
                 scenario={active}
                 currentStep={active.current_step}
                 networkState={currentState}

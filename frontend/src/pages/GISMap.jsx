@@ -5,6 +5,7 @@ import {
   TileLayer,
   CircleMarker,
   Polyline,
+  Polygon,
   Popup,
   LayerGroup,
   Rectangle,
@@ -16,6 +17,49 @@ import { ChevronRight } from 'lucide-react'
 import { alarmsAPI, metersAPI, derAPI, gisAPI, ntlAPI, outagesAPI, hesAPI } from '@/services/api'
 import LayerSwitcher from '@/components/map/LayerSwitcher'
 import ContextMenu from '@/components/map/ContextMenu'
+import HierarchyPanel from '@/components/map/HierarchyPanel'
+
+// Per-level default zoom used when a node has no bbox to fly to.
+const HIERARCHY_ZOOM_BY_LEVEL = {
+  zone:        5,
+  circle:      7,
+  division:    9,
+  subdivision: 10,
+  substation:  12,
+  feeder:      13,
+  dtr:         15,
+  consumer:    17,
+}
+
+// Top-4 boundary polygon fills — brand palette, matched to HierarchyPanel pills.
+const BOUNDARY_COLOR_BY_LEVEL = {
+  zone:        '#ABC7FF',
+  circle:      '#ABC7FF',
+  division:    '#56CCF2',
+  subdivision: '#56CCF2',
+}
+
+// Only the top 4 admin levels have polygon boundaries the map can render.
+const HIERARCHY_ORDER = ['zone', 'circle', 'division', 'subdivision']
+
+// Pan/zoom the map to the active hierarchy node whenever it changes.
+function HierarchyFlyer({ node }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!node || !map) return
+    if (Array.isArray(node.bbox) && node.bbox.length === 4) {
+      const [minLon, minLat, maxLon, maxLat] = node.bbox
+      map.flyToBounds([[minLat, minLon], [maxLat, maxLon]], { padding: [40, 40], duration: 0.8 })
+      return
+    }
+    if (Array.isArray(node.center) && node.center.length === 2) {
+      const [lon, lat] = node.center
+      const z = HIERARCHY_ZOOM_BY_LEVEL[node.level] ?? 8
+      map.flyTo([lat, lon], z, { duration: 0.8 })
+    }
+  }, [node, map])
+  return null
+}
 
 // ── Colour tables ─────────────────────────────────────────────────────────────
 
@@ -129,6 +173,14 @@ export default function GISMap() {
   const [contextMenu, setContextMenu] = useState(null)
   const [selectedAsset, setSelectedAsset] = useState(null)
 
+  // ── Hierarchy drill-down state ───────────────────────────────────────────
+  // `tree` holds the last `hierarchyTree` response for the current node
+  // (node + stats + children + commands). `breadcrumb` is the stack of
+  // ancestor nodes used to walk back up.
+  const [tree, setTree] = useState(null)
+  const [breadcrumb, setBreadcrumb] = useState([])
+  const [boundariesFC, setBoundariesFC] = useState({ features: [] })
+
   const safeGet = async (fn) => {
     try { return await fn() } catch (e) { return null }
   }
@@ -145,9 +197,19 @@ export default function GISMap() {
         safeGet(() => derAPI.list()),
       ])
       if (cancelled) return
-      setFeederFC(feeder?.data ?? { features: [] })
-      setDtrFC(dtr?.data ?? { features: [] })
-      setMeterFC(meter?.data ?? { features: [] })
+      // Defensive: backend `/gis/layers/{layer}` is currently broken (Feeder
+      // model has no PostGIS `geom` column → 500). The frontend's
+      // `gisAPI.layer()` accidentally hits `/gis/layers` (no path) which
+      // returns the layer catalog, not a FeatureCollection — so `.features`
+      // is undefined and any downstream `.features.map()` blows up the whole
+      // page. Coerce any non-FC payload into an empty FC so the page renders.
+      const asFC = (payload) =>
+        payload && Array.isArray(payload.features)
+          ? payload
+          : { type: 'FeatureCollection', features: [] }
+      setFeederFC(asFC(feeder?.data))
+      setDtrFC(asFC(dtr?.data))
+      setMeterFC(asFC(meter?.data))
       setDers(dersResp?.data ?? [])
       setLoading(false)
     })()
@@ -178,6 +240,71 @@ export default function GISMap() {
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
   }, [])
+
+  // ── Hierarchy: initial fetch (root) + boundary polygons ─────────────────
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [rootResp, boundsResp] = await Promise.all([
+        safeGet(() => gisAPI.hierarchyTree()),
+        safeGet(() => gisAPI.hierarchyBoundaries()),
+      ])
+      if (cancelled) return
+      if (rootResp?.data) {
+        setTree(rootResp.data)
+        setBreadcrumb(rootResp.data.node ? [rootResp.data.node] : [])
+      }
+      setBoundariesFC(boundsResp?.data ?? { features: [] })
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const loadNode = useCallback(async (parentId, nextBreadcrumb) => {
+    const resp = await safeGet(() => gisAPI.hierarchyTree(parentId))
+    if (resp?.data) {
+      setTree(resp.data)
+      if (nextBreadcrumb) setBreadcrumb(nextBreadcrumb)
+    }
+  }, [])
+
+  const handleDrill = useCallback(async (child) => {
+    // Optimistically fly to the child by seeding tree.node before the fetch
+    // returns, so HierarchyFlyer animates immediately.
+    setTree((prev) => (prev ? { ...prev, node: child, stats: child.stats ?? {}, children: [], commands: [] } : prev))
+    setBreadcrumb((prev) => [...prev, child])
+    await loadNode(child.id, null)
+  }, [loadNode])
+
+  const handleBreadcrumbClick = useCallback(async (nodeId) => {
+    setBreadcrumb((prev) => {
+      const idx = prev.findIndex((n) => n.id === nodeId)
+      if (idx < 0) return prev
+      const next = prev.slice(0, idx + 1)
+      // Kick off refetch for the ancestor node.
+      const targetIsRoot = idx === 0
+      loadNode(targetIsRoot ? undefined : nodeId, null)
+      return next
+    })
+  }, [loadNode])
+
+  const handleResetHierarchy = useCallback(async () => {
+    const resp = await safeGet(() => gisAPI.hierarchyTree())
+    if (resp?.data) {
+      setTree(resp.data)
+      setBreadcrumb(resp.data.node ? [resp.data.node] : [])
+    }
+  }, [])
+
+  const handleHierarchyCommand = useCallback(async (cmd) => {
+    const nodeId = tree?.node?.id
+    if (!nodeId) return null
+    try {
+      const resp = await gisAPI.hierarchyCommand(cmd, nodeId)
+      return resp?.data ?? null
+    } catch (e) {
+      return { ok: false, message: e?.message ?? 'Command failed' }
+    }
+  }, [tree])
 
   // ── Context menu handlers ──
   const handleContextMenu = useCallback((e, asset) => {
@@ -253,6 +380,27 @@ export default function GISMap() {
   const alarmCellCount = heatmap.cells?.length ?? 0
   const suspectCount = ntlSuspectsFC.features?.length ?? 0
 
+  // Only show polygons at the current node's level or one level deeper so the
+  // map stays readable while drilling. Top 4 levels only (zone → subdivision).
+  const currentLevel = tree?.node?.level
+  const currentIdx = HIERARCHY_ORDER.indexOf(currentLevel)
+  const visibleBoundaryLevels = useMemo(() => {
+    if (currentIdx < 0) return new Set(['zone', 'circle'])
+    const levels = new Set()
+    if (currentLevel) levels.add(currentLevel)
+    const next = HIERARCHY_ORDER[currentIdx + 1]
+    if (next) levels.add(next)
+    return levels
+  }, [currentIdx, currentLevel])
+
+  // Build a child-lookup so polygon clicks can pass the full child object to
+  // handleDrill (needed for the flyer's bbox/center).
+  const childById = useMemo(() => {
+    const m = new Map()
+    ;(tree?.children ?? []).forEach((c) => m.set(c.id, c))
+    return m
+  }, [tree])
+
   return (
     <div className="flex flex-col gap-3 h-full animate-slide-up" data-testid="gis-map-page">
       <LayerSwitcher layers={layers} onToggle={toggleLayer} />
@@ -269,6 +417,50 @@ export default function GISMap() {
             <FitBounds points={allCoords} />
             <ZoomTracker onZoomChange={setZoom} />
             <BoundsTracker onBoundsChange={setBbox} />
+            <HierarchyFlyer node={tree?.node} />
+
+            {/* Hierarchy boundary polygons (zone → subdivision) */}
+            <LayerGroup>
+              {boundariesFC.features?.map((f, i) => {
+                const lvl = f.properties?.level
+                if (!visibleBoundaryLevels.has(lvl)) return null
+                const coords = f.geometry?.coordinates
+                if (!coords || !coords.length) return null
+                // GeoJSON polygon: coords[0] is outer ring of [lon, lat] pairs.
+                const ring = (f.geometry.type === 'MultiPolygon' ? coords[0][0] : coords[0]) || []
+                const positions = ring.map(([lon, lat]) => [lat, lon])
+                if (positions.length < 3) return null
+                const color = BOUNDARY_COLOR_BY_LEVEL[lvl] ?? '#ABC7FF'
+                const childNode = childById.get(f.properties?.id)
+                return (
+                  <Polygon
+                    key={`bnd-${lvl}-${f.properties?.id ?? i}`}
+                    positions={positions}
+                    pathOptions={{
+                      color,
+                      weight: 2,
+                      opacity: 0.4,
+                      fillColor: color,
+                      fillOpacity: 0.15,
+                    }}
+                    eventHandlers={{
+                      click: () => {
+                        if (childNode) handleDrill(childNode)
+                      },
+                    }}
+                  >
+                    <Popup>
+                      <div style={{ fontFamily: 'Satoshi, sans-serif' }}>
+                        <b>{f.properties?.name}</b><br />
+                        <span style={{ color, textTransform: 'uppercase', fontSize: 11 }}>
+                          {lvl}
+                        </span>
+                      </div>
+                    </Popup>
+                  </Polygon>
+                )
+              })}
+            </LayerGroup>
 
             {/* Feeder LineStrings */}
             {layers.feeder && (
@@ -413,6 +605,11 @@ export default function GISMap() {
               )
             })}
 
+            {/* Hierarchy drill-down panel moved OUT of MapContainer (rendered
+                below as a sibling overlay) — react-leaflet 4+ rejects non-leaflet
+                children that don't use useMap(), and a plain div crashes the
+                whole map render. */}
+
             {/* DER assets (always-on overlay) */}
             <LayerGroup>
               {ders.map(d => (
@@ -433,6 +630,18 @@ export default function GISMap() {
             </LayerGroup>
           </MapContainer>
         )}
+        {/* Hierarchy drill-down panel — sibling overlay over the map div. */}
+        <HierarchyPanel
+          currentNode={tree?.node}
+          stats={tree?.stats ?? {}}
+          children={tree?.children ?? []}
+          commands={tree?.commands ?? []}
+          breadcrumb={breadcrumb}
+          onDrill={handleDrill}
+          onBreadcrumbClick={handleBreadcrumbClick}
+          onReset={handleResetHierarchy}
+          onCommand={handleHierarchyCommand}
+        />
       </div>
 
       <div className="glass-card p-3 flex flex-wrap gap-5 items-center">

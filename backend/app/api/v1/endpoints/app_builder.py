@@ -626,3 +626,137 @@ def delete_algorithm(
     for r in rows:
         r.status = STATUS_ARCHIVED
     db.commit()
+
+
+# ── Widget data-source catalog ────────────────────────────────────────────
+# Consumed by the DashboardBuilder widget-config drawer. Each entry tells the
+# UI which metric options + refresh hints apply, and which existing API to
+# call at render time.
+WIDGET_SOURCES = [
+    {
+        "id": "meters_summary",
+        "name": "Meters — summary",
+        "description": "Total / online / offline meter counts across the fleet",
+        "api": "/meters/summary",
+        "widget_types": ["kpi", "gauge"],
+        "metrics": [
+            {"key": "total",          "label": "Total meters",    "format": "int"},
+            {"key": "online",         "label": "Online meters",   "format": "int"},
+            {"key": "offline",        "label": "Offline meters",  "format": "int", "severity_high": True},
+            {"key": "disconnected",   "label": "Disconnected",    "format": "int"},
+        ],
+        "refresh_seconds": 30,
+    },
+    {
+        "id": "alarms_active",
+        "name": "Alarms — active feed",
+        "description": "Currently-active network alarms by severity",
+        "api": "/alarms?status=active",
+        "widget_types": ["alarm", "kpi", "bar"],
+        "metrics": [
+            {"key": "count_critical", "label": "Critical", "format": "int", "severity_high": True},
+            {"key": "count_high",     "label": "High",     "format": "int"},
+            {"key": "count_medium",   "label": "Medium",   "format": "int"},
+        ],
+        "refresh_seconds": 10,
+    },
+    {
+        "id": "der_list",
+        "name": "DER assets",
+        "description": "PV / BESS / EV charger / microgrid fleet state",
+        "api": "/der",
+        "widget_types": ["der", "kpi", "bar"],
+        "metrics": [
+            {"key": "pv_output_kw",     "label": "PV output (kW)",       "format": "kw"},
+            {"key": "bess_soc_pct",     "label": "BESS SoC (%)",         "format": "pct"},
+            {"key": "ev_sessions",      "label": "Active EV sessions",   "format": "int"},
+            {"key": "total_capacity_kw","label": "Total DER capacity",   "format": "kw"},
+        ],
+        "refresh_seconds": 15,
+    },
+    {
+        "id": "feeder_loading",
+        "name": "Feeder loading",
+        "description": "Loading % across all feeders",
+        "api": "/meters/feeders",
+        "widget_types": ["line", "bar", "gauge"],
+        "metrics": [
+            {"key": "loading_pct", "label": "Loading %", "format": "pct", "severity_high_threshold": 80},
+        ],
+        "refresh_seconds": 60,
+    },
+    {
+        "id": "consumption_summary",
+        "name": "Energy consumption",
+        "description": "Aggregate kWh consumption for the last N days",
+        "api": "/consumption/summary",
+        "widget_types": ["line", "bar", "kpi"],
+        "metrics": [
+            {"key": "total_kwh",        "label": "Total (kWh)",      "format": "kwh"},
+            {"key": "avg_daily_kwh",    "label": "Daily average",    "format": "kwh"},
+            {"key": "peak_hour_kw",     "label": "Peak hour (kW)",   "format": "kw"},
+        ],
+        "refresh_seconds": 300,
+    },
+    {
+        "id": "transformer_sensors",
+        "name": "Transformer sensors",
+        "description": "Winding / oil temperature from the sensor mesh",
+        "api": "/der/transformers/sensors",
+        "widget_types": ["line", "gauge", "kpi"],
+        "metrics": [
+            {"key": "winding_temp_c", "label": "Winding temp (°C)", "format": "c", "severity_high_threshold": 90},
+            {"key": "oil_temp_c",     "label": "Oil temp (°C)",     "format": "c", "severity_high_threshold": 85},
+            {"key": "vibration_mms",  "label": "Vibration (mm/s)",  "format": "num"},
+        ],
+        "refresh_seconds": 30,
+    },
+    {
+        "id": "ntl_suspects",
+        "name": "NTL suspects",
+        "description": "Non-technical-loss (tamper / theft) candidate meters",
+        "api": "/ntl/suspects",
+        "widget_types": ["meter", "kpi", "map"],
+        "metrics": [
+            {"key": "count",      "label": "Suspect count",   "format": "int"},
+            {"key": "high_score", "label": "High-score (≥70)", "format": "int", "severity_high": True},
+        ],
+        "refresh_seconds": 120,
+    },
+    {
+        "id": "outages_active",
+        "name": "Active outages",
+        "description": "Live outage tracker",
+        "api": "/outages?status=active",
+        "widget_types": ["map", "kpi", "alarm"],
+        "metrics": [
+            {"key": "count",          "label": "Active outages",   "format": "int", "severity_high": True},
+            {"key": "customers_out",  "label": "Customers out",    "format": "int"},
+        ],
+        "refresh_seconds": 15,
+    },
+    {
+        "id": "hierarchy_overview",
+        "name": "Network hierarchy",
+        "description": "Zone → Circle → Division aggregated KPIs",
+        "api": "/gis/hierarchy/tree",
+        "widget_types": ["map", "kpi", "bar"],
+        "metrics": [
+            {"key": "active_alarms",   "label": "Active alarms",   "format": "int"},
+            {"key": "critical_alarms", "label": "Critical alarms", "format": "int", "severity_high": True},
+            {"key": "total_load_kw",   "label": "Total load (kW)", "format": "kw"},
+            {"key": "avg_loading_pct", "label": "Avg loading %",   "format": "pct"},
+        ],
+        "refresh_seconds": 60,
+    },
+]
+
+
+# Separate router to avoid colliding with /apps/{slug} path resolution.
+widget_sources_router = APIRouter(prefix="/widget-sources", tags=["app-builder-widgets"])
+
+
+@widget_sources_router.get("")
+def list_widget_sources(_: User = Depends(get_current_user)):
+    """Catalog of bindable data sources for AppBuilder widgets."""
+    return {"sources": WIDGET_SOURCES}

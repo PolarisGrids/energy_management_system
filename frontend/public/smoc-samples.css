@@ -1,0 +1,461 @@
+/**
+ * SMOC sample-design tokens + primitives.
+ *
+ * Ported from simulation_sample/*.html so the simulation visualisations,
+ * GIS hierarchy panel, and AppBuilder studio match the shared design the
+ * domain team approved. Scoped under `.smoc-sim` so it does not overrun
+ * the rest of the app's dark theme.
+ */
+.smoc-sim {
+  /* ── Color tokens (light corporate palette) ── */
+  --color-background-primary:   #FFFFFF;
+  --color-background-secondary: #F5F7FA;
+  --color-background-tertiary:  #EEF1F5;
+  --color-border-secondary:     #D5DBE3;
+  --color-border-tertiary:      #E3E7ED;
+  --color-text-primary:         #1B1F26;
+  --color-text-secondary:       #6B7280;
+
+  /* Accent colors (literal from samples) */
+  --acc-red:     #E24B4A;
+  --acc-red-d:   #A32D2D;
+  --acc-red-xd:  #791F1F;
+  --acc-red-bg:  #FCEBEB;
+  --acc-red-pill:#F7C1C1;
+
+  --acc-amber:   #EF9F27;
+  --acc-amber-d: #854F0B;
+  --acc-amber-xd:#633806;
+  --acc-amber-bg:#FAEEDA;
+  --acc-amber-pill:#FAC775;
+
+  --acc-blue:    #378ADD;
+  --acc-blue-d:  #185FA5;
+  --acc-blue-xd: #0C447C;
+  --acc-blue-bg: #E6F1FB;
+  --acc-blue-pill:#B5D4F4;
+
+  --acc-green:   #639922;
+  --acc-green-d: #3B6D11;
+  --acc-green-xd:#27500A;
+  --acc-green-bg:#EAF3DE;
+  --acc-green-pill:#C0DD97;
+
+  --acc-purple:  #5149B4;
+  --acc-purple-xd:#26215C;
+  --acc-purple-bg:#E8E5FA;
+  --acc-purple-pill:#CECBF6;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--color-text-primary);
+  /* Outer frame stays transparent so the host app's dark shell shows
+     through — only the nested panels, metrics and alarms render on the
+     light sample palette. */
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  width: 100%;
+}
+
+.smoc-sim * { box-sizing: border-box; min-width: 0; }
+
+/* ── Top bar (status strip) ── */
+.smoc-sim .topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--radius-lg);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.smoc-sim .topbar > * { min-width: 0; }
+.smoc-sim .topbar-title {
+  font-size: 13px; font-weight: 500;
+  color: var(--color-text-primary);
+  letter-spacing: 0.04em;
+}
+.smoc-sim .topbar-meta {
+  font-size: 11px; color: var(--color-text-secondary);
+}
+.smoc-sim .topbar-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 500;
+}
+.smoc-sim .topbar-status.danger { color: var(--acc-red-d); }
+.smoc-sim .topbar-status.warn   { color: var(--acc-amber-d); }
+.smoc-sim .topbar-status.ok     { color: var(--acc-green-d); }
+.smoc-sim .topbar-status.info   { color: var(--acc-blue-d); }
+
+.smoc-sim .pulse {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--acc-red);
+  animation: smoc-blink 1s ease-in-out infinite;
+}
+.smoc-sim .pulse.amber { background: var(--acc-amber); }
+.smoc-sim .pulse.blue  { background: var(--acc-blue); }
+.smoc-sim .pulse.green { background: var(--acc-green); }
+@keyframes smoc-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+/* ── Grid helpers (responsive — collapse on narrow viewports) ── */
+.smoc-sim .grid        { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.smoc-sim .grid-2      { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.smoc-sim .grid-bot    { display: grid; grid-template-columns: 1.2fr 1fr 0.9fr;           gap: 8px; }
+.smoc-sim .grid-4      { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+@media (max-width: 1200px) {
+  .smoc-sim .grid, .smoc-sim .grid-bot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .smoc-sim .grid-4                    { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .smoc-sim .grid, .smoc-sim .grid-bot, .smoc-sim .grid-2, .smoc-sim .grid-4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Panel ── */
+.smoc-sim .panel {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  min-width: 0;
+  /* Don't clip — parent page handles vertical scroll. Horizontal scroll
+     on wide tables/SVGs is handled by their own wrapper. */
+  overflow: visible;
+}
+.smoc-sim .panel > table,
+.smoc-sim .panel > div > table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.smoc-sim .panel svg { max-width: 100%; height: auto; }
+
+/* Span hints reset on narrow viewports so nothing overflows. */
+@media (max-width: 1200px) {
+  .smoc-sim .panel[style*="span 2"] { grid-column: auto !important; }
+}
+.smoc-sim .panel-title {
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+.smoc-sim .panel-title.warn   { color: var(--acc-amber-d); }
+.smoc-sim .panel-title.danger { color: var(--acc-red-d); }
+.smoc-sim .panel-title.ok     { color: var(--acc-green-d); }
+.smoc-sim .panel-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+/* ── Metric cards ── */
+.smoc-sim .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.smoc-sim .metric {
+  background: var(--color-background-secondary);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
+.smoc-sim .metric-label {
+  font-size: 10px; color: var(--color-text-secondary); margin-bottom: 2px;
+}
+.smoc-sim .metric-val {
+  font-size: 18px; font-weight: 500; color: var(--color-text-primary);
+}
+.smoc-sim .metric-val.danger { color: var(--acc-red-d); }
+.smoc-sim .metric-val.warn   { color: var(--acc-amber-d); }
+.smoc-sim .metric-val.ok     { color: var(--acc-green-d); }
+.smoc-sim .metric-val.info   { color: var(--acc-blue-d); }
+.smoc-sim .metric-unit {
+  font-size: 10px; color: var(--color-text-secondary); font-weight: 400;
+}
+
+/* ── Badge / pill ── */
+.smoc-sim .badge {
+  display: inline-block;
+  font-size: 9px; font-weight: 500;
+  padding: 2px 6px; border-radius: 4px;
+  white-space: nowrap;
+}
+.smoc-sim .badge.danger { background: var(--acc-red-pill);   color: var(--acc-red-xd); }
+.smoc-sim .badge.warn   { background: var(--acc-amber-pill); color: var(--acc-amber-xd); }
+.smoc-sim .badge.ok     { background: var(--acc-green-pill); color: var(--acc-green-xd); }
+.smoc-sim .badge.info   { background: var(--acc-blue-pill);  color: var(--acc-blue-xd); }
+.smoc-sim .badge.purple { background: var(--acc-purple-pill);color: var(--acc-purple-xd); }
+.smoc-sim .badge.neutral{ background: var(--color-background-secondary); color: var(--color-text-secondary); }
+
+/* ── Alarm row ── */
+.smoc-sim .alarm {
+  display: flex; gap: 8px;
+  padding: 6px 8px; border-radius: 0 6px 6px 0;
+  margin-bottom: 5px; font-size: 11px;
+}
+.smoc-sim .alarm.cr { background: var(--acc-red-bg);   border-left: 3px solid var(--acc-red); }
+.smoc-sim .alarm.ma { background: var(--acc-amber-bg); border-left: 3px solid var(--acc-amber); }
+.smoc-sim .alarm.ok { background: var(--acc-green-bg); border-left: 3px solid var(--acc-green); }
+.smoc-sim .alarm.in { background: var(--acc-blue-bg);  border-left: 3px solid var(--acc-blue); }
+.smoc-sim .alarm .ab {
+  font-size: 9px; font-weight: 500; padding: 2px 5px; border-radius: 4px;
+  white-space: nowrap; margin-top: 1px;
+}
+.smoc-sim .alarm.cr .ab { background: var(--acc-red-pill);   color: var(--acc-red-xd); }
+.smoc-sim .alarm.ma .ab { background: var(--acc-amber-pill); color: var(--acc-amber-xd); }
+.smoc-sim .alarm.ok .ab { background: var(--acc-green-pill); color: var(--acc-green-xd); }
+.smoc-sim .alarm.in .ab { background: var(--acc-blue-pill);  color: var(--acc-blue-xd); }
+.smoc-sim .alarm-text { color: var(--color-text-primary); line-height: 1.4; }
+.smoc-sim .alarm-time { font-size: 9px; color: var(--color-text-secondary); margin-top: 2px; }
+
+/* ── Algorithm stepper ── */
+.smoc-sim .algo-steps { display: flex; flex-direction: column; gap: 4px; }
+.smoc-sim .algo-step {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 8px; border-radius: 6px;
+  border: 0.5px solid var(--color-border-tertiary);
+}
+.smoc-sim .algo-step.active { border-color: var(--acc-blue);  background: var(--acc-blue-bg); }
+.smoc-sim .algo-step.done   { border-color: var(--acc-green); background: var(--acc-green-bg); }
+.smoc-sim .algo-step.error  { border-color: var(--acc-red);   background: var(--acc-red-bg); }
+.smoc-sim .algo-step.pending{ opacity: 0.45; }
+.smoc-sim .step-num {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 500; flex-shrink: 0; margin-top: 1px;
+  background: var(--color-background-secondary); color: var(--color-text-secondary);
+}
+.smoc-sim .algo-step.done   .step-num { background: var(--acc-green); color: var(--acc-green-bg); }
+.smoc-sim .algo-step.active .step-num { background: var(--acc-blue);  color: var(--acc-blue-bg);
+                                        animation: smoc-blink 1.4s ease-in-out infinite; }
+.smoc-sim .step-text { font-size: 11px; color: var(--color-text-primary); line-height: 1.35; }
+.smoc-sim .step-sub  { font-size: 10px; color: var(--color-text-secondary); margin-top: 2px; }
+
+/* ── Tables ── */
+.smoc-sim table {
+  width: 100%; border-collapse: collapse; font-size: 10px;
+}
+.smoc-sim table th {
+  font-size: 9px; font-weight: 500; color: var(--color-text-secondary);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 3px 4px; border-bottom: 0.5px solid var(--color-border-tertiary);
+  text-align: left;
+}
+.smoc-sim table td {
+  padding: 5px 4px; border-bottom: 0.5px solid var(--color-border-tertiary);
+  color: var(--color-text-primary); vertical-align: middle;
+}
+.smoc-sim table tr:last-child td { border-bottom: none; }
+
+/* ── Progress / voltage bars ── */
+.smoc-sim .pbar-wrap {
+  width: 56px; height: 6px;
+  background: var(--color-background-secondary);
+  border-radius: 3px; overflow: hidden;
+  display: inline-block; vertical-align: middle;
+}
+.smoc-sim .pbar {
+  height: 6px; border-radius: 3px;
+  transition: width 1.8s ease;
+  background: var(--acc-blue);
+}
+.smoc-sim .pbar.ok     { background: var(--acc-green); }
+.smoc-sim .pbar.warn   { background: var(--acc-amber); }
+.smoc-sim .pbar.danger { background: var(--acc-red); }
+
+.smoc-sim .vbar-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 5px; font-size: 10px;
+}
+.smoc-sim .vbar-label {
+  width: 34px; color: var(--color-text-secondary);
+  font-size: 9px; text-align: right; flex-shrink: 0;
+}
+.smoc-sim .vbar-bg {
+  flex: 1; height: 10px; background: var(--color-background-secondary);
+  border-radius: 3px; overflow: hidden;
+}
+.smoc-sim .vbar-fill {
+  height: 10px; border-radius: 3px; transition: width 1.5s ease;
+  background: var(--acc-blue);
+}
+.smoc-sim .vbar-val {
+  width: 46px; font-size: 9px; font-weight: 500; flex-shrink: 0;
+}
+.smoc-sim .vbar-val.over { color: var(--acc-red-d); }
+.smoc-sim .vbar-val.warn { color: var(--acc-amber-d); }
+.smoc-sim .vbar-val.ok   { color: var(--acc-green-d); }
+
+/* ── Buttons ── */
+.smoc-sim .btn {
+  font-size: 11px; font-weight: 500;
+  padding: 5px 12px; border-radius: var(--radius-md);
+  border: 0.5px solid var(--color-border-secondary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary); cursor: pointer;
+  transition: background 0.2s;
+}
+.smoc-sim .btn:hover   { background: var(--color-background-secondary); }
+.smoc-sim .btn.primary { background: var(--acc-blue-bg);  border-color: var(--acc-blue);  color: var(--acc-blue-xd); }
+.smoc-sim .btn.success { background: var(--acc-green-bg); border-color: var(--acc-green); color: var(--acc-green-xd); }
+.smoc-sim .btn.warn    { background: var(--acc-amber-bg); border-color: var(--acc-amber);color: var(--acc-amber-xd); }
+.smoc-sim .btn.danger  { background: var(--acc-red-bg);   border-color: var(--acc-red);  color: var(--acc-red-xd); }
+.smoc-sim .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Misc: scoped scrollbar + focus ring ── */
+.smoc-sim *:focus-visible {
+  outline: 2px solid var(--acc-blue);
+  outline-offset: 1px;
+}
+
+/* ── Sample-specific aliases (ptitle/tb-*/mcard/mval/g2/g3/g4/etc.) ── */
+/* The HTML samples use both `.panel-title` / `.topbar-title` / `.metric-val`
+   (solar) and `.ptitle` / `.tb-title` / `.mval` (EV, microgrid, sensor, fault,
+   gis, developer-studio). We emit alias rules so React components can use
+   either set verbatim. */
+.smoc-sim .tb-title      { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.smoc-sim .tb-meta       { font-size: 11px; color: var(--color-text-secondary); }
+.smoc-sim .tb-status     { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; }
+
+.smoc-sim .pulse.red     { background: var(--acc-red); }
+
+.smoc-sim .g2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.smoc-sim .g3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.smoc-sim .g4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+@media (max-width: 1200px) {
+  .smoc-sim .g3, .smoc-sim .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .smoc-sim .g2, .smoc-sim .g3, .smoc-sim .g4 { grid-template-columns: minmax(0, 1fr); }
+}
+
+.smoc-sim .ptitle {
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+.smoc-sim .ptitle.danger { color: var(--acc-red-d); }
+.smoc-sim .ptitle.warn   { color: var(--acc-amber-d); }
+.smoc-sim .ptitle.ok     { color: var(--acc-green-d); }
+
+.smoc-sim .mcard {
+  background: var(--color-background-secondary);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+}
+.smoc-sim .mlabel  { font-size: 10px; color: var(--color-text-secondary); margin-bottom: 2px; }
+.smoc-sim .mval    { font-size: 20px; font-weight: 500; color: var(--color-text-primary); }
+.smoc-sim .mval.danger { color: var(--acc-red-d); }
+.smoc-sim .mval.warn   { color: var(--acc-amber-d); }
+.smoc-sim .mval.ok     { color: var(--acc-green-d); }
+.smoc-sim .mval.info   { color: var(--acc-blue-d); }
+.smoc-sim .munit   { font-size: 10px; color: var(--color-text-secondary); font-weight: 400; }
+.smoc-sim .mgrid   { display: grid; grid-template-columns: 1fr 1fr;     gap: 6px; }
+.smoc-sim .mgrid3  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+
+.smoc-sim .strip {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--color-background-secondary);
+  border-radius: 6px; padding: 5px 8px; margin-bottom: 4px; font-size: 11px;
+}
+.smoc-sim .strip-l { color: var(--color-text-secondary); }
+.smoc-sim .strip-v { font-weight: 500; color: var(--color-text-primary); }
+.smoc-sim .strip-v.danger { color: var(--acc-red-d); }
+.smoc-sim .strip-v.warn   { color: var(--acc-amber-d); }
+.smoc-sim .strip-v.ok     { color: var(--acc-green-d); }
+
+.smoc-sim .loadbar-wrap {
+  height: 14px; background: var(--color-background-secondary);
+  border-radius: 4px; overflow: hidden; margin-bottom: 3px;
+}
+.smoc-sim .loadbar { height: 14px; border-radius: 4px; transition: width 1.2s ease; }
+
+/* Long-form alarm class used by EV/solar samples (critical/major/minor). */
+.smoc-sim .alarm.critical { background: var(--acc-red-bg);   border-left: 3px solid var(--acc-red); }
+.smoc-sim .alarm.major    { background: var(--acc-amber-bg); border-left: 3px solid var(--acc-amber); }
+.smoc-sim .alarm.minor    { background: var(--acc-blue-bg);  border-left: 3px solid var(--acc-blue); }
+.smoc-sim .alarm-badge {
+  font-size: 9px; font-weight: 500;
+  padding: 2px 5px; border-radius: 4px;
+  white-space: nowrap; margin-top: 1px;
+}
+.smoc-sim .alarm.critical .alarm-badge { background: var(--acc-red-pill);   color: var(--acc-red-xd); }
+.smoc-sim .alarm.major    .alarm-badge { background: var(--acc-amber-pill); color: var(--acc-amber-xd); }
+.smoc-sim .alarm.minor    .alarm-badge { background: var(--acc-blue-pill);  color: var(--acc-blue-xd); }
+.smoc-sim .alarm.ok       .alarm-badge { background: var(--acc-green-pill); color: var(--acc-green-xd); }
+
+.smoc-sim .cmd-list   { font-family: var(--font-mono, monospace); font-size: 10px; }
+.smoc-sim .cmd-row    {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; border-radius: 5px; margin-bottom: 4px;
+  background: var(--color-background-secondary);
+}
+.smoc-sim .cmd-label  { color: var(--color-text-primary); }
+.smoc-sim .cmd-val    { color: var(--acc-blue-d); font-weight: 500; }
+.smoc-sim .cmd-btn    {
+  font-size: 9px; padding: 3px 8px;
+  border-radius: 4px; border: 0.5px solid var(--color-border-secondary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary); cursor: pointer;
+}
+.smoc-sim .cmd-btn:hover { background: var(--color-background-secondary); }
+.smoc-sim .cmd-btn.active { background: var(--acc-blue-bg); border-color: var(--acc-blue); color: var(--acc-blue-xd); }
+
+.smoc-sim .sim-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.smoc-sim .sbtn {
+  font-size: 11px; padding: 5px 12px;
+  border-radius: 6px; border: 0.5px solid var(--color-border-secondary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary); cursor: pointer;
+}
+.smoc-sim .sbtn:hover  { background: var(--color-background-secondary); }
+.smoc-sim .sbtn.active { background: var(--acc-blue-bg); border-color: var(--acc-blue); color: var(--acc-blue-xd); }
+
+.smoc-sim .ev-bay {
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 8px; padding: 8px; text-align: center;
+}
+.smoc-sim .ev-bay.charging  { border-color: var(--acc-blue);  background: var(--acc-blue-bg); }
+.smoc-sim .ev-bay.idle      { border-color: var(--color-border-tertiary); background: var(--color-background-secondary); }
+.smoc-sim .ev-bay.curtailed { border-color: var(--acc-amber); background: var(--acc-amber-bg); }
+.smoc-sim .bay-id   { font-size: 10px; font-weight: 500; color: var(--color-text-primary); }
+.smoc-sim .bay-pwr  { font-size: 16px; font-weight: 500; }
+.smoc-sim .soc-bar-wrap { height: 8px; background: var(--color-border-tertiary); border-radius: 4px; margin: 4px 0; overflow: hidden; }
+.smoc-sim .soc-bar  { height: 8px; border-radius: 4px; transition: width 2s ease; background: var(--acc-blue); }
+.smoc-sim .phase-tag { font-size: 9px; color: var(--color-text-secondary); }
+
+/* Microgrid / sensor / developer-studio specific */
+.smoc-sim .gbar {
+  height: 12px; background: var(--color-background-secondary);
+  border-radius: 3px; overflow: hidden;
+}
+.smoc-sim .gbar .fill { height: 100%; transition: width 1.6s ease; }
+
+.smoc-sim .der-card {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--radius-lg); padding: 10px;
+}
+.smoc-sim .der-card .hd { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+
+.smoc-sim .pill-tab {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font-size: 11px; font-weight: 500;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: 999px; background: var(--color-background-primary);
+  color: var(--color-text-secondary); cursor: pointer;
+}
+.smoc-sim .pill-tab.active {
+  background: var(--acc-blue-bg);
+  border-color: var(--acc-blue); color: var(--acc-blue-xd);
+}

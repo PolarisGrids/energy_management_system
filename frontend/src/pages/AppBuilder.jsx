@@ -1,9 +1,10 @@
 /**
- * AppBuilder — spec 018 W4.T8.
+ * AppBuilder — spec 018 W4.T8 + P4 (functional widgets).
  *
  * Persisted AppBuilder surface backed by the backend /apps, /app-rules,
- * /algorithms endpoints. Replaces the earlier hardcoded prototype which
- * held rules/apps/algorithms in component state only.
+ * /algorithms endpoints. Dashboard Builder now supports live widget
+ * bindings against the backend widget-source catalog, with per-widget
+ * polling and a full-screen runtime view via My Apps → Open.
  *
  * Roles
  *   Publish actions require the `app_builder_publish` role. Until Agent N
@@ -13,10 +14,14 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import {
   BarChart2, LineChart, Gauge, Map, Bell, Cpu, Table2, Type,
-  LayoutDashboard, PlusCircle, Play, Save, Trash2, Edit3, Eye,
-  Download, BookOpen, Maximize2, RefreshCw, ChevronDown, ChevronUp,
+  LayoutDashboard, PlusCircle, Play, Save, Trash2, Eye,
+  BookOpen, Maximize2, RefreshCw, ChevronDown, ChevronUp,
+  X, Settings, AlertCircle,
 } from 'lucide-react'
-import { appBuilderAPI } from '@/services/api'
+import {
+  appBuilderAPI, metersAPI, alarmsAPI, derAPI,
+  consumptionAPI, ntlAPI, outagesAPI, gisAPI,
+} from '@/services/api'
 
 // ─── Constants (widget palette + form enums) ──────────────────────────────────
 const WIDGET_PALETTE = [
@@ -26,10 +31,12 @@ const WIDGET_PALETTE = [
   { id: 'gauge', name: 'Gauge',       icon: Gauge,     color: '#F59E0B' },
   { id: 'map',   name: 'Map View',    icon: Map,       color: '#02C9A8' },
   { id: 'alarm', name: 'Alarm Table', icon: Bell,      color: '#E94B4B' },
-  { id: 'der',   name: 'DER Status',  icon: Cpu,       color: '#8B5CF6' },
+  { id: 'der',   name: 'DER Status',  icon: Cpu,       color: '#11ABBE' },
   { id: 'meter', name: 'Meter Table', icon: Table2,    color: '#ABC7FF' },
   { id: 'text',  name: 'Text Block',  icon: Type,      color: 'rgba(255,255,255,0.5)' },
 ]
+
+const PALETTE_BY_ID = WIDGET_PALETTE.reduce((m, w) => { m[w.id] = w; return m }, {})
 
 const TRIGGERS = ['Alarm Raised', 'Meter Offline', 'DER Curtailed', 'Voltage Violation', 'Threshold Breach']
 const METRICS  = ['Voltage (pu)', 'Current (A)', 'Power (kW)', 'Meter Status', 'Tamper Event', 'Energy (kWh)']
@@ -54,7 +61,113 @@ const canPublish = () => {
   return r && ['admin', 'supervisor', 'app_builder_publish'].includes(r)
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const clampRefresh = (n) => {
+  const v = Number.isFinite(+n) ? +n : 30
+  return Math.max(5, Math.min(600, Math.round(v)))
+}
+
+// ─── Live data fetching + metric extraction ──────────────────────────────────
+// Given a binding, call the correct API and return the raw response `.data`.
+async function fetchSourceData(source) {
+  if (!source) throw new Error('no source')
+  switch (source.api) {
+    case '/meters/summary':          return (await metersAPI.summary()).data
+    case '/alarms?status=active':    return (await alarmsAPI.list({ status: 'active', limit: 50 })).data
+    case '/der':                     return (await derAPI.list()).data
+    case '/meters/feeders':          return (await metersAPI.feeders()).data
+    case '/consumption/summary':     return (await consumptionAPI.summary()).data
+    case '/der/transformers/sensors': {
+      if (typeof derAPI.transformerSensors === 'function') {
+        return (await derAPI.transformerSensors()).data
+      }
+      return (await derAPI.list()).data
+    }
+    case '/ntl/suspects':            return (await ntlAPI.suspects({ limit: 100 })).data
+    case '/outages?status=active':   return (await outagesAPI.list({ status: 'active' })).data
+    case '/gis/hierarchy/tree':      return (await gisAPI.hierarchyTree()).data
+    default: throw new Error(`unknown api ${source.api}`)
+  }
+}
+
+// Compute a scalar metric value from an API payload based on source id.
+function extractMetric(apiResponse, metricKey, sourceId) {
+  if (apiResponse == null) return null
+  const arr = Array.isArray(apiResponse) ? apiResponse : null
+  switch (sourceId) {
+    case 'meters_summary':
+      return apiResponse[metricKey]
+    case 'alarms_active': {
+      if (!arr) return null
+      if (metricKey === 'count_critical') return arr.filter(a => (a.severity || '').toLowerCase() === 'critical').length
+      if (metricKey === 'count_high')     return arr.filter(a => (a.severity || '').toLowerCase() === 'high').length
+      if (metricKey === 'count_medium')   return arr.filter(a => (a.severity || '').toLowerCase() === 'medium').length
+      return arr.length
+    }
+    case 'der_list': {
+      if (!arr) return null
+      if (metricKey === 'pv_output_kw')     return arr.filter(a => a.asset_type === 'pv').reduce((s, a) => s + (+a.current_output_kw || 0), 0)
+      if (metricKey === 'bess_soc_pct') {
+        const bess = arr.filter(a => a.asset_type === 'bess')
+        if (!bess.length) return 0
+        return bess.reduce((s, a) => s + (+a.state_of_charge || 0), 0) / bess.length
+      }
+      if (metricKey === 'ev_sessions')      return arr.filter(a => a.asset_type === 'ev_charger').reduce((s, a) => s + (+a.active_sessions || 0), 0)
+      if (metricKey === 'total_capacity_kw') return arr.reduce((s, a) => s + (+a.capacity_kw || +a.current_output_kw || 0), 0)
+      return arr.length
+    }
+    case 'feeder_loading': {
+      if (!arr) return null
+      if (metricKey === 'loading_pct') {
+        if (!arr.length) return 0
+        return arr.reduce((s, f) => s + (+f.loading_pct || 0), 0) / arr.length
+      }
+      return null
+    }
+    case 'consumption_summary': {
+      const d = apiResponse.data || apiResponse
+      return d ? d[metricKey] : null
+    }
+    case 'transformer_sensors': {
+      if (!arr) return null
+      const vals = arr.map(s => +s[metricKey]).filter(Number.isFinite)
+      if (!vals.length) return null
+      return vals.reduce((a, b) => a + b, 0) / vals.length
+    }
+    case 'ntl_suspects': {
+      if (!arr) return null
+      if (metricKey === 'count') return arr.length
+      if (metricKey === 'high_score') return arr.filter(s => (+s.score || 0) >= 70).length
+      return null
+    }
+    case 'outages_active': {
+      if (!arr) return null
+      if (metricKey === 'count') return arr.length
+      if (metricKey === 'customers_out') return arr.reduce((s, o) => s + (+o.customers_affected || 0), 0)
+      return null
+    }
+    case 'hierarchy_overview':
+      return apiResponse?.stats?.[metricKey] ?? null
+    default:
+      return null
+  }
+}
+
+function formatValue(v, fmt) {
+  if (v == null || Number.isNaN(v)) return '—'
+  const n = +v
+  if (!Number.isFinite(n)) return String(v)
+  switch (fmt) {
+    case 'pct':  return `${n.toFixed(1)}%`
+    case 'kw':   return `${n.toFixed(1)} kW`
+    case 'kwh':  return `${n.toFixed(0)} kWh`
+    case 'c':    return `${n.toFixed(1)} °C`
+    case 'int':  return Math.round(n).toLocaleString()
+    case 'num':  return n.toFixed(2)
+    default:     return String(v)
+  }
+}
+
+// ─── UI Helpers ───────────────────────────────────────────────────────────────
 function TabBar({ tabs, active, onChange }) {
   return (
     <div style={{
@@ -116,6 +229,724 @@ function Toast({ message, type = 'info', onClose }) {
     }}>
       <span style={{ color, fontWeight: 700, marginRight: 8 }}>{type.toUpperCase()}</span>
       {message}
+    </div>
+  )
+}
+
+// ─── Widget Config Drawer ────────────────────────────────────────────────────
+function WidgetConfigDrawer({ widget, sources, onSave, onClose }) {
+  const existing = widget?.binding || {}
+  const [title, setTitle] = useState(existing.title || widget?.name || '')
+  const [sourceId, setSourceId] = useState(existing.source_id || '')
+  const [metricKey, setMetricKey] = useState(existing.metric_key || '')
+  const [refreshSeconds, setRefreshSeconds] = useState(existing.refresh_seconds || 30)
+
+  const eligibleSources = useMemo(() => {
+    if (!widget) return []
+    return (sources || []).filter(s =>
+      !s.widget_types || s.widget_types.length === 0 || s.widget_types.includes(widget.id)
+    )
+  }, [sources, widget])
+
+  const activeSource = useMemo(
+    () => (sources || []).find(s => s.id === sourceId) || null,
+    [sources, sourceId],
+  )
+
+  const activeMetric = useMemo(
+    () => (activeSource?.metrics || []).find(m => m.key === metricKey) || null,
+    [activeSource, metricKey],
+  )
+
+  const pickSource = (nextId) => {
+    setSourceId(nextId)
+    const src = (sources || []).find(s => s.id === nextId)
+    // Reset metric to the new source's first metric if the current one is not valid.
+    if (src && !src.metrics.find(m => m.key === metricKey)) {
+      setMetricKey(src.metrics[0]?.key || '')
+    } else if (!src) {
+      setMetricKey('')
+    }
+  }
+
+  if (!widget) return null
+
+  const thresholdHint = activeMetric
+    ? (activeMetric.severity_high_threshold != null
+        ? `Severity-high above ${activeMetric.severity_high_threshold}`
+        : activeMetric.severity_high
+          ? 'Severity-high metric'
+          : '—')
+    : '—'
+
+  const save = () => {
+    if (!sourceId || !metricKey) return
+    onSave({
+      title: title.trim() || widget.name,
+      source_id: sourceId,
+      metric_key: metricKey,
+      refresh_seconds: clampRefresh(refreshSeconds),
+    })
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, right: 0, bottom: 0, width: 340,
+      zIndex: 1500, padding: 16, overflowY: 'auto',
+    }} className="animate-slide-up">
+      <div className="glass-card" style={{
+        padding: 20, height: 'calc(100% - 16px)',
+        border: '1px solid rgba(2,201,168,0.25)', boxShadow: '-6px 0 24px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Settings size={14} style={{ color: '#02C9A8' }} />
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>Configure Widget</span>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
+            cursor: 'pointer', padding: 4,
+          }}><X size={16} /></button>
+        </div>
+
+        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 14, fontFamily: 'monospace' }}>
+          type: {widget.id}
+        </div>
+
+        <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', display: 'block', marginBottom: 5, fontWeight: 700 }}>Title</label>
+        <input value={title} onChange={e => setTitle(e.target.value)}
+          placeholder="Widget title"
+          style={{
+            width: '100%', padding: '8px 10px', marginBottom: 12,
+            background: 'rgba(10,54,144,0.25)', border: '1px solid rgba(171,199,255,0.15)',
+            borderRadius: 6, color: '#fff', fontSize: 12, outline: 'none', boxSizing: 'border-box',
+          }} />
+
+        <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', display: 'block', marginBottom: 5, fontWeight: 700 }}>Data Source</label>
+        <select value={sourceId} onChange={e => pickSource(e.target.value)}
+          style={{
+            width: '100%', padding: '8px 10px', marginBottom: 12,
+            background: 'rgba(10,54,144,0.25)', border: '1px solid rgba(171,199,255,0.15)',
+            borderRadius: 6, color: '#ABC7FF', fontSize: 12, outline: 'none', boxSizing: 'border-box',
+          }}>
+          <option value="" style={{ background: '#0A1535' }}>— Select a source —</option>
+          {eligibleSources.map(s => (
+            <option key={s.id} value={s.id} style={{ background: '#0A1535' }}>{s.name}</option>
+          ))}
+        </select>
+
+        <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', display: 'block', marginBottom: 5, fontWeight: 700 }}>Metric</label>
+        <select value={metricKey} onChange={e => setMetricKey(e.target.value)} disabled={!activeSource}
+          style={{
+            width: '100%', padding: '8px 10px', marginBottom: 12,
+            background: 'rgba(10,54,144,0.25)', border: '1px solid rgba(171,199,255,0.15)',
+            borderRadius: 6, color: '#ABC7FF', fontSize: 12, outline: 'none', boxSizing: 'border-box',
+          }}>
+          {(activeSource?.metrics || []).map(m => (
+            <option key={m.key} value={m.key} style={{ background: '#0A1535' }}>{m.label}</option>
+          ))}
+        </select>
+
+        <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', display: 'block', marginBottom: 5, fontWeight: 700 }}>Refresh (seconds, 5–600)</label>
+        <input type="number" min={5} max={600} value={refreshSeconds}
+          onChange={e => setRefreshSeconds(e.target.value)}
+          style={{
+            width: '100%', padding: '8px 10px', marginBottom: 12,
+            background: 'rgba(10,54,144,0.25)', border: '1px solid rgba(171,199,255,0.15)',
+            borderRadius: 6, color: '#fff', fontSize: 12, outline: 'none', boxSizing: 'border-box',
+          }} />
+
+        <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', display: 'block', marginBottom: 5, fontWeight: 700 }}>Threshold hint</label>
+        <div style={{
+          padding: '8px 10px', marginBottom: 16,
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 6, color: 'rgba(255,255,255,0.55)', fontSize: 11,
+        }}>{thresholdHint}</div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-primary" onClick={save} disabled={!sourceId || !metricKey}
+            style={{ flex: 1, gap: 6, padding: '8px 12px', fontSize: 12,
+              opacity: (!sourceId || !metricKey) ? 0.5 : 1,
+              cursor: (!sourceId || !metricKey) ? 'not-allowed' : 'pointer' }}>
+            <Save size={12} /> Save binding
+          </button>
+          <button className="btn-secondary" onClick={onClose}
+            style={{ flex: 1, padding: '8px 12px', fontSize: 12 }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Shared frame for every rendered live widget.
+function WidgetFrame({ title, err, children }) {
+  return (
+    <div style={{ position: 'relative', padding: 10, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.55)',
+          textTransform: 'uppercase', letterSpacing: '0.06em',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85%',
+        }}>{title}</span>
+        {err && (
+          <span title="API error" style={{
+            width: 6, height: 6, borderRadius: '50%', background: '#E94B4B',
+            boxShadow: '0 0 4px #E94B4B',
+          }} />
+        )}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+    </div>
+  )
+}
+
+// ─── Live Widget renderer ────────────────────────────────────────────────────
+// Polls the bound source on `refresh_seconds` and renders per-type.
+function LiveWidget({ widget, sources, compact = true }) {
+  const { binding } = widget || {}
+  const source = useMemo(
+    () => (sources || []).find(s => s.id === binding?.source_id) || null,
+    [sources, binding?.source_id],
+  )
+  const metricMeta = useMemo(
+    () => (source?.metrics || []).find(m => m.key === binding?.metric_key) || null,
+    [source, binding?.metric_key],
+  )
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState(false)
+  const [history, setHistory] = useState([])
+  const histRef = useRef([])
+
+  useEffect(() => {
+    if (!source || !binding) return undefined
+    let alive = true
+    const load = async () => {
+      try {
+        const payload = await fetchSourceData(source)
+        if (!alive) return
+        setData(payload)
+        setErr(false)
+        const v = extractMetric(payload, binding.metric_key, source.id)
+        if (Number.isFinite(+v)) {
+          const next = [...histRef.current, +v].slice(-20)
+          histRef.current = next
+          setHistory(next)
+        }
+      } catch {
+        if (!alive) return
+        setErr(true)
+      }
+    }
+    load()
+    const ms = clampRefresh(binding.refresh_seconds) * 1000
+    const h = setInterval(load, ms)
+    return () => { alive = false; clearInterval(h) }
+  }, [source, binding])
+
+  const palette = PALETTE_BY_ID[widget?.id] || { color: '#02C9A8', icon: Gauge }
+
+  if (!binding) {
+    const Icon = palette.icon
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', height: '100%', gap: 6,
+      }}>
+        <Icon size={22} style={{ color: palette.color }} />
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Click to configure</span>
+      </div>
+    )
+  }
+
+  const title = binding.title || widget.name
+  const value = data != null ? extractMetric(data, binding.metric_key, source?.id) : null
+  const threshold = metricMeta?.severity_high_threshold
+  const isHigh = metricMeta?.severity_high
+    || (threshold != null && Number.isFinite(+value) && +value >= threshold)
+  const valueColor = isHigh ? '#E94B4B' : palette.color
+
+  // ── KPI
+  if (widget.id === 'kpi') {
+    const big = compact ? 28 : 44
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+          <div style={{ fontSize: big, fontWeight: 900, color: valueColor, lineHeight: 1 }}>
+            {formatValue(value, metricMeta?.format)}
+          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>
+            {metricMeta?.label || binding.metric_key}
+          </div>
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Gauge (0–100 ring)
+  if (widget.id === 'gauge') {
+    const pct = Math.max(0, Math.min(100, +value || 0))
+    const r = 32, cx = 40, cy = 40
+    const circ = 2 * Math.PI * r
+    const off = circ * (1 - pct / 100)
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, height: '100%' }}>
+          <svg width={80} height={80}>
+            <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={6} />
+            <circle cx={cx} cy={cy} r={r} fill="none" stroke={valueColor} strokeWidth={6}
+              strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round"
+              transform={`rotate(-90 ${cx} ${cy})`} />
+            <text x={cx} y={cy + 4} textAnchor="middle" fill="#fff" fontSize={14} fontWeight={800}>
+              {Number.isFinite(+value) ? Math.round(+value) : '—'}
+            </text>
+          </svg>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{metricMeta?.label}</div>
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Line (mini polyline, last 20)
+  if (widget.id === 'line') {
+    const pts = history
+    const w = 200, h = 60
+    let poly = ''
+    if (pts.length > 1) {
+      const mn = Math.min(...pts), mx = Math.max(...pts)
+      const rng = mx - mn || 1
+      poly = pts.map((p, i) => {
+        const x = (i / (pts.length - 1)) * w
+        const y = h - ((p - mn) / rng) * h
+        return `${x.toFixed(1)},${y.toFixed(1)}`
+      }).join(' ')
+    }
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: valueColor, marginBottom: 4 }}>
+            {formatValue(value, metricMeta?.format)}
+          </div>
+          <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ flex: 1, width: '100%' }}>
+            {poly && <polyline points={poly} fill="none" stroke={valueColor} strokeWidth={1.5} />}
+          </svg>
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Bar (bar chart from list)
+  if (widget.id === 'bar') {
+    const arr = Array.isArray(data) ? data : (data?.data && Array.isArray(data.data) ? data.data : [])
+    const items = arr.slice(0, 8).map((a, i) => {
+      let label = a.name || a.feeder_name || a.asset_type || a.title || `#${i + 1}`
+      let val = 0
+      if (source?.id === 'feeder_loading') val = +a.loading_pct || 0
+      else if (source?.id === 'der_list') val = +a.current_output_kw || +a.capacity_kw || 0
+      else if (source?.id === 'alarms_active') val = 1
+      else val = +a[binding.metric_key] || 0
+      return { label, val }
+    })
+    const mx = Math.max(1, ...items.map(i => i.val))
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, height: '100%', overflow: 'hidden' }}>
+          {items.length === 0 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>No data</span>}
+          {items.map((it, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10 }}>
+              <span style={{
+                flex: '0 0 40%', color: 'rgba(255,255,255,0.6)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{it.label}</span>
+              <div style={{ flex: 1, height: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 3 }}>
+                <div style={{ width: `${(it.val / mx) * 100}%`, height: '100%', background: palette.color, borderRadius: 3 }} />
+              </div>
+              <span style={{ flex: '0 0 32px', textAlign: 'right', color: '#ABC7FF', fontFamily: 'monospace' }}>
+                {Number.isFinite(it.val) ? it.val.toFixed(0) : '—'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Alarm (top 5 alarms)
+  if (widget.id === 'alarm') {
+    const arr = Array.isArray(data) ? data : []
+    const sevColor = (sv) => ({
+      critical: '#E94B4B', high: '#F59E0B', medium: '#56CCF2', low: '#ABC7FF',
+    }[(sv || '').toLowerCase()] || '#ABC7FF')
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%', overflow: 'hidden' }}>
+          {arr.length === 0 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>No active alarms</span>}
+          {arr.slice(0, 5).map((a, i) => (
+            <div key={a.id || i} style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 10,
+              padding: '3px 6px', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              borderLeft: `3px solid ${sevColor(a.severity)}`,
+            }}>
+              <span style={{ color: sevColor(a.severity), fontWeight: 700, width: 54, textTransform: 'uppercase' }}>
+                {(a.severity || '—').slice(0, 6)}
+              </span>
+              <span style={{
+                flex: 1, color: '#fff',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{a.title || a.description || a.alarm_type || 'alarm'}</span>
+            </div>
+          ))}
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Meter (mini table)
+  if (widget.id === 'meter') {
+    const arr = Array.isArray(data) ? data.slice(0, 6) : []
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ height: '100%', overflow: 'hidden' }}>
+          {arr.length === 0 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>No rows</span>}
+          <table style={{ width: '100%', fontSize: 10, borderCollapse: 'collapse' }}>
+            <tbody>
+              {arr.map((row, i) => (
+                <tr key={row.id || row.serial || i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={{ color: '#ABC7FF', fontFamily: 'monospace', padding: '2px 4px' }}>
+                    {row.serial || row.meter_serial || row.id || `#${i + 1}`}
+                  </td>
+                  <td style={{ color: '#fff', textAlign: 'right', padding: '2px 4px' }}>
+                    {row.score != null ? `score ${row.score}` : row.status || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── DER (card list)
+  if (widget.id === 'der') {
+    const arr = Array.isArray(data) ? data.slice(0, 5) : []
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%', overflow: 'hidden' }}>
+          {arr.length === 0 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>No DER</span>}
+          {arr.map((d, i) => (
+            <div key={d.id || i} style={{
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: 10,
+              padding: '4px 6px', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+            }}>
+              <Cpu size={10} style={{ color: palette.color }} />
+              <span style={{ color: '#fff', fontWeight: 700, width: 60 }}>{d.asset_type || '—'}</span>
+              <span style={{ flex: 1, color: 'rgba(255,255,255,0.6)' }}>
+                {d.current_output_kw != null ? `${(+d.current_output_kw).toFixed(1)} kW` : ''}
+                {d.state_of_charge != null ? ` · SoC ${(+d.state_of_charge).toFixed(0)}%` : ''}
+                {d.active_sessions != null ? ` · ${d.active_sessions} sessions` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Map (list w/ coords)
+  if (widget.id === 'map') {
+    const arr = Array.isArray(data) ? data.slice(0, 5)
+      : (data?.features ? data.features.slice(0, 5) : [])
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%', overflow: 'hidden' }}>
+          {arr.length === 0 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>No locations</span>}
+          {arr.map((p, i) => {
+            const lat = p.latitude ?? p.lat ?? p.geometry?.coordinates?.[1]
+            const lng = p.longitude ?? p.lng ?? p.geometry?.coordinates?.[0]
+            return (
+              <div key={p.id || i} style={{
+                display: 'flex', alignItems: 'center', gap: 6, fontSize: 10,
+                padding: '3px 6px', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              }}>
+                <Map size={10} style={{ color: palette.color }} />
+                <span style={{ color: '#fff', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.title || p.name || p.description || `location ${i + 1}`}
+                </span>
+                <span style={{ color: '#ABC7FF', fontFamily: 'monospace' }}>
+                  {lat != null && lng != null ? `${(+lat).toFixed(2)},${(+lng).toFixed(2)}` : '—'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // ── Text
+  if (widget.id === 'text') {
+    return (
+      <WidgetFrame title={title} err={err}>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+          {binding.title || 'Text block — edit in config drawer.'}
+        </div>
+      </WidgetFrame>
+    )
+  }
+
+  // Fallback
+  return (
+    <WidgetFrame title={title} err={err}>
+      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Unsupported widget</div>
+    </WidgetFrame>
+  )
+}
+
+// ─── Dashboard Builder ───────────────────────────────────────────────────────
+function DashboardBuilder({ toast }) {
+  const GRID_ROWS = 3, GRID_COLS = 4
+  const [canvas, setCanvas] = useState(Array(GRID_ROWS * GRID_COLS).fill(null))
+  const [saveName, setSaveName] = useState('')
+  const [sources, setSources] = useState([])
+  const [configIdx, setConfigIdx] = useState(null)   // grid idx currently being configured
+  const dragRef = useRef(null)
+
+  // Load widget-sources catalog once.
+  useEffect(() => {
+    let alive = true
+    appBuilderAPI.listWidgetSources()
+      .then(res => { if (alive) setSources(res.data?.sources || []) })
+      .catch(() => { if (alive) toast.show('Failed to load widget sources', 'error') })
+    return () => { alive = false }
+  }, [toast])
+
+  const handleDrop = (idx, e) => {
+    e.preventDefault()
+    if (!dragRef.current || canvas[idx]) return
+    const next = [...canvas]
+    next[idx] = { ...dragRef.current, cellId: idx, binding: null }
+    setCanvas(next)
+    dragRef.current = null
+    // Open config drawer immediately.
+    setConfigIdx(idx)
+  }
+
+  const removeWidget = (idx) => {
+    const next = [...canvas]
+    next[idx] = null
+    setCanvas(next)
+    if (configIdx === idx) setConfigIdx(null)
+  }
+
+  const saveBinding = (idx, binding) => {
+    const next = [...canvas]
+    if (next[idx]) next[idx] = { ...next[idx], binding }
+    setCanvas(next)
+    setConfigIdx(null)
+  }
+
+  const saveAsApp = async () => {
+    if (!saveName.trim()) {
+      toast.show('Provide an app name first', 'error'); return
+    }
+    const widgets = canvas
+      .map((w, i) => w ? {
+        slot: i,
+        widget: w.id,
+        name: w.name,
+        binding: w.binding || null,
+      } : null)
+      .filter(Boolean)
+    try {
+      await appBuilderAPI.createApp({
+        slug: slugify(saveName),
+        name: saveName.trim(),
+        description: `Dashboard with ${widgets.length} widget(s)`,
+        definition: { widgets, grid: { rows: GRID_ROWS, cols: GRID_COLS } },
+      })
+      toast.show('Saved as app', 'success')
+      setSaveName('')
+    } catch (e) {
+      toast.show(e?.response?.data?.detail || 'Save failed', 'error')
+    }
+  }
+
+  const configWidget = configIdx != null ? canvas[configIdx] : null
+
+  return (
+    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 240px)' }}>
+      <div className="glass-card" style={{ padding: 16, width: 160, overflowY: 'auto', flexShrink: 0 }}>
+        <SectionLabel text="Widget Palette" />
+        {WIDGET_PALETTE.map(w => (
+          <div
+            key={w.id}
+            draggable
+            onDragStart={() => { dragRef.current = w }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+              borderRadius: 8, marginBottom: 6, cursor: 'grab',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            <w.icon size={14} style={{ color: w.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>{w.name}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{
+          flex: 1, display: 'grid', gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
+          gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)`, gap: 8,
+        }}>
+          {canvas.map((widget, idx) => (
+            <div
+              key={idx}
+              onDragOver={e => { if (!canvas[idx]) { e.preventDefault() } }}
+              onDrop={e => handleDrop(idx, e)}
+              style={{
+                borderRadius: 10, minHeight: 0, minWidth: 0,
+                border: `1px solid ${widget ? (widget.binding ? 'rgba(2,201,168,0.35)' : 'rgba(245,158,11,0.4)') : 'rgba(255,255,255,0.08)'}`,
+                background: widget ? `${widget.color}0d` : 'rgba(255,255,255,0.03)',
+                position: 'relative', display: 'flex', flexDirection: 'column',
+              }}
+            >
+              {widget ? (
+                <>
+                  <LiveWidget widget={widget} sources={sources} compact />
+                  <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 4 }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); setConfigIdx(idx) }}
+                      title="Configure"
+                      style={{
+                        width: 20, height: 20, borderRadius: '50%',
+                        background: 'rgba(2,201,168,0.2)', border: '1px solid rgba(2,201,168,0.4)',
+                        color: '#02C9A8', cursor: 'pointer', padding: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    ><Settings size={10} /></button>
+                    <button
+                      onClick={e => { e.stopPropagation(); removeWidget(idx) }}
+                      title="Remove"
+                      style={{
+                        width: 20, height: 20, borderRadius: '50%',
+                        background: 'rgba(233,75,75,0.3)', border: '1px solid rgba(233,75,75,0.5)',
+                        color: '#E94B4B', cursor: 'pointer', padding: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    ><X size={10} /></button>
+                  </div>
+                  {!widget.binding && (
+                    <div style={{
+                      position: 'absolute', bottom: 6, left: 8,
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      fontSize: 9, color: '#F59E0B', fontWeight: 700,
+                    }}>
+                      <AlertCircle size={9} /> Click gear to bind data
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Drop here</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            value={saveName}
+            onChange={e => setSaveName(e.target.value)}
+            placeholder="App name to save this layout as…"
+            style={{ flex: 1, padding: '8px 12px', background: 'rgba(10,54,144,0.25)',
+              border: '1px solid rgba(171,199,255,0.15)', borderRadius: 6, color: '#fff', fontSize: 13, outline: 'none' }}
+          />
+          <button className="btn-primary" onClick={saveAsApp} style={{ gap: 6, padding: '8px 16px', fontSize: 12 }}>
+            <Save size={13} /> Save as App
+          </button>
+        </div>
+      </div>
+
+      {configWidget && (
+        <WidgetConfigDrawer
+          widget={configWidget}
+          sources={sources}
+          onSave={(binding) => saveBinding(configIdx, binding)}
+          onClose={() => setConfigIdx(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Widget Runtime (My Apps → Open full-screen view) ────────────────────────
+function WidgetRuntime({ app, onExit }) {
+  const [sources, setSources] = useState([])
+
+  useEffect(() => {
+    let alive = true
+    appBuilderAPI.listWidgetSources()
+      .then(res => { if (alive) setSources(res.data?.sources || []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const defn = app?.definition || {}
+  const grid = defn.grid || { rows: 3, cols: 4 }
+  const widgets = defn.widgets || []
+
+  // Build cell map keyed by slot.
+  const cells = Array(grid.rows * grid.cols).fill(null)
+  for (const w of widgets) {
+    if (w.slot != null && w.slot < cells.length) {
+      const pal = PALETTE_BY_ID[w.widget] || PALETTE_BY_ID.kpi
+      cells[w.slot] = { id: w.widget, name: w.name || pal?.name, color: pal?.color, cellId: w.slot, binding: w.binding || null }
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#0A0F1E',
+      display: 'flex', flexDirection: 'column', zIndex: 1000, padding: 24,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <LayoutDashboard size={22} style={{ color: '#02C9A8' }} />
+            <h1 style={{ color: '#fff', fontSize: 22, fontWeight: 900, margin: 0 }}>{app.name}</h1>
+            <StatusBadge status={app.status} />
+          </div>
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, margin: '4px 0 0' }}>
+            v{app.version} · {widgets.length} widget(s) · live preview
+          </p>
+        </div>
+        <button className="btn-secondary" onClick={onExit} style={{ gap: 6, padding: '8px 14px', fontSize: 12 }}>
+          <X size={13} /> Exit Preview
+        </button>
+      </div>
+
+      <div style={{
+        flex: 1, display: 'grid',
+        gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
+        gridTemplateRows: `repeat(${grid.rows}, 1fr)`,
+        gap: 10, minHeight: 0,
+      }}>
+        {cells.map((w, idx) => (
+          <div key={idx} className="glass-card" style={{
+            padding: 0, minHeight: 0, minWidth: 0, overflow: 'hidden',
+            border: '1px solid rgba(171,199,255,0.15)',
+          }}>
+            {w ? (
+              <LiveWidget widget={w} sources={sources} compact={false} />
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'rgba(255,255,255,0.15)', fontSize: 11 }}>empty</div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -203,7 +1034,17 @@ function MyApps({ toast }) {
     }
   }
 
-  const appColors = ['#02C9A8', '#56CCF2', '#8B5CF6', '#F59E0B', '#E94B4B']
+  const openAppLive = async (app) => {
+    // Fetch the full app (to ensure fresh definition.widgets is included).
+    try {
+      const res = await appBuilderAPI.getApp(app.slug)
+      setOpenApp(res.data || app)
+    } catch {
+      setOpenApp(app)
+    }
+  }
+
+  const appColors = ['#02C9A8', '#56CCF2', '#3C63FF', '#F59E0B', '#E94B4B']
 
   return (
     <div>
@@ -248,7 +1089,7 @@ function MyApps({ toast }) {
                 <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', margin: '0 0 12px' }}>{app.description}</p>
               )}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button className="btn-primary" onClick={() => setOpenApp(app)} style={{ padding: '6px 12px', fontSize: 11, gap: 4 }}>
+                <button className="btn-primary" onClick={() => openAppLive(app)} style={{ padding: '6px 12px', fontSize: 11, gap: 4 }}>
                   <Maximize2 size={11} /> Open
                 </button>
                 {app.status === 'DRAFT' && (
@@ -342,20 +1183,7 @@ function MyApps({ toast }) {
         </div>
       )}
 
-      {openApp && (
-        <div style={{
-          position: 'fixed', inset: 0, background: '#0A0F1E',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-          <LayoutDashboard size={56} style={{ color: '#02C9A8', marginBottom: 20 }} />
-          <h1 style={{ color: '#fff', fontSize: 28, fontWeight: 900, margin: '0 0 8px' }}>{openApp.name}</h1>
-          <StatusBadge status={openApp.status} />
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 14, margin: '16px 0 28px' }}>
-            Version {openApp.version} · {openApp.definition?.widgets?.length || 0} widget(s)
-          </p>
-          <button className="btn-secondary" onClick={() => setOpenApp(null)}>Exit Preview</button>
-        </div>
-      )}
+      {openApp && <WidgetRuntime app={openApp} onExit={() => setOpenApp(null)} />}
     </div>
   )
 }
@@ -754,126 +1582,6 @@ function AlgorithmEditor({ toast }) {
           }}>
             {consoleOut || '— No output yet. Press Preview / Run to execute in the sandbox. —'}
           </pre>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Dashboard Builder (in-memory scratchpad — saving persists via /apps) ─────
-function DashboardBuilder({ toast }) {
-  const GRID_ROWS = 3, GRID_COLS = 4
-  const [canvas, setCanvas] = useState(Array(GRID_ROWS * GRID_COLS).fill(null))
-  const [saveName, setSaveName] = useState('')
-  const dragRef = useRef(null)
-
-  const handleDrop = (idx, e) => {
-    e.preventDefault()
-    if (!dragRef.current || canvas[idx]) return
-    const next = [...canvas]
-    next[idx] = { ...dragRef.current, cellId: idx }
-    setCanvas(next)
-    dragRef.current = null
-  }
-
-  const removeWidget = (idx) => {
-    const next = [...canvas]
-    next[idx] = null
-    setCanvas(next)
-  }
-
-  const saveAsApp = async () => {
-    if (!saveName.trim()) {
-      toast.show('Provide an app name first', 'error'); return
-    }
-    const widgets = canvas
-      .map((w, i) => w ? { slot: i, widget: w.id, name: w.name } : null)
-      .filter(Boolean)
-    try {
-      await appBuilderAPI.createApp({
-        slug: slugify(saveName),
-        name: saveName.trim(),
-        description: `Dashboard with ${widgets.length} widget(s)`,
-        definition: { widgets, grid: { rows: GRID_ROWS, cols: GRID_COLS } },
-      })
-      toast.show('Saved as app', 'success')
-      setSaveName('')
-    } catch (e) {
-      toast.show(e?.response?.data?.detail || 'Save failed', 'error')
-    }
-  }
-
-  return (
-    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 240px)' }}>
-      <div className="glass-card" style={{ padding: 16, width: 160, overflowY: 'auto', flexShrink: 0 }}>
-        <SectionLabel text="Widget Palette" />
-        {WIDGET_PALETTE.map(w => (
-          <div
-            key={w.id}
-            draggable
-            onDragStart={() => { dragRef.current = w }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-              borderRadius: 8, marginBottom: 6, cursor: 'grab',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-            }}
-          >
-            <w.icon size={14} style={{ color: w.color, flexShrink: 0 }} />
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>{w.name}</span>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{
-          flex: 1, display: 'grid', gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
-          gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)`, gap: 8,
-        }}>
-          {canvas.map((widget, idx) => (
-            <div
-              key={idx}
-              onDragOver={e => { if (!canvas[idx]) { e.preventDefault() } }}
-              onDrop={e => handleDrop(idx, e)}
-              style={{
-                borderRadius: 10,
-                border: `2px dashed ${widget ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)'}`,
-                background: widget ? `${widget.color}0d` : 'rgba(255,255,255,0.03)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                position: 'relative',
-              }}
-            >
-              {widget ? (
-                <>
-                  <widget.icon size={22} style={{ color: widget.color, marginBottom: 6 }} />
-                  <span style={{ fontSize: 11, fontWeight: 700, color: widget.color }}>{widget.name}</span>
-                  <button
-                    onClick={e => { e.stopPropagation(); removeWidget(idx) }}
-                    style={{
-                      position: 'absolute', top: 6, right: 6, width: 18, height: 18,
-                      borderRadius: '50%', background: 'rgba(233,75,75,0.3)', border: '1px solid rgba(233,75,75,0.5)',
-                      color: '#E94B4B', cursor: 'pointer', fontSize: 11, fontWeight: 900,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
-                    }}
-                  >×</button>
-                </>
-              ) : (
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Drop here</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input
-            value={saveName}
-            onChange={e => setSaveName(e.target.value)}
-            placeholder="App name to save this layout as…"
-            style={{ flex: 1, padding: '8px 12px', background: 'rgba(10,54,144,0.25)',
-              border: '1px solid rgba(171,199,255,0.15)', borderRadius: 6, color: '#fff', fontSize: 13, outline: 'none' }}
-          />
-          <button className="btn-primary" onClick={saveAsApp} style={{ gap: 6, padding: '8px 16px', fontSize: 12 }}>
-            <Save size={13} /> Save as App
-          </button>
         </div>
       </div>
     </div>

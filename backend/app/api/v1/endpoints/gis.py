@@ -173,6 +173,117 @@ LAYER_CONFIG = {
 }
 
 
+# ── lat/lon fallback ────────────────────────────────────────────────────────
+# Several core models (Meter, Transformer, Feeder, DERAsset, Alarm) carry
+# latitude/longitude (or, for Feeder, a `geojson` LineString) but no PostGIS
+# `geom` column — so the original ST_-based query path raises
+# AttributeError. This fallback builds RFC 7946 Features from those columns
+# directly, with Python-side bbox filtering. Used only when the ORM model
+# lacks the configured geom_attr; layers backed by real PostGIS columns
+# (zones, outage_areas, service_lines, poles) still use the fast SQL path.
+
+def _bbox_contains(lat: Optional[float], lon: Optional[float],
+                   bbox: Optional[Tuple[float, float, float, float]]) -> bool:
+    if lat is None or lon is None:
+        return False
+    if bbox is None:
+        return True
+    minlon, minlat, maxlon, maxlat = bbox
+    return minlon <= lon <= maxlon and minlat <= lat <= maxlat
+
+
+def _latlon_layer_fallback(
+    db: Session,
+    layer: str,
+    bbox_parsed: Optional[Tuple[float, float, float, float]],
+    status: Optional[str],
+    max_features: int,
+) -> Dict[str, Any]:
+    """Build a FeatureCollection from lat/lon (or geojson) attributes."""
+    features: List[Dict[str, Any]] = []
+    truncated = False
+
+    if layer in ("meters", "transformers", "der", "alarms"):
+        model_props_map = {
+            "meters":       (Meter, _meter_props),
+            "transformers": (Transformer, _transformer_props),
+            "der":          (DERAsset, _der_props),
+            "alarms":       (Alarm, _alarm_props),
+        }
+        model, props_fn = model_props_map[layer]
+        q = db.query(model)
+        if layer == "alarms":
+            from app.models.alarm import AlarmStatus
+            q = q.filter(model.status == (status or AlarmStatus.ACTIVE))
+        rows = q.limit(max_features * 4).all()  # over-fetch then filter by bbox
+        for row in rows:
+            lat = getattr(row, "latitude", None)
+            lon = getattr(row, "longitude", None)
+            if not _bbox_contains(lat, lon, bbox_parsed):
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": props_fn(row),
+            })
+            if len(features) >= max_features:
+                truncated = True
+                break
+
+    elif layer == "feeders":
+        # Feeder.geojson stores a JSON LineString { coordinates: [[lon,lat], ...] }.
+        # Fall back to a synthetic line between the substation centre and the
+        # average of the feeder's transformer locations when geojson is empty.
+        rows = db.query(Feeder).limit(max_features * 2).all()
+        for row in rows:
+            line: List[List[float]] = []
+            if row.geojson:
+                try:
+                    if isinstance(row.geojson, dict):
+                        coords = row.geojson.get("coordinates") or []
+                    elif isinstance(row.geojson, list):
+                        coords = row.geojson
+                    else:
+                        coords = []
+                    line = [[float(c[0]), float(c[1])] for c in coords if isinstance(c, (list, tuple)) and len(c) >= 2]
+                except Exception:
+                    line = []
+            if not line:
+                # Build line from this feeder's transformers (if any).
+                tx_rows = db.query(Transformer).filter(Transformer.feeder_id == row.id).all()
+                tx_pts = [[t.longitude, t.latitude] for t in tx_rows
+                          if t.latitude is not None and t.longitude is not None]
+                if len(tx_pts) >= 2:
+                    line = tx_pts
+                elif len(tx_pts) == 1:
+                    line = [tx_pts[0], tx_pts[0]]
+            if len(line) < 2:
+                continue
+            # Bbox check: include if any vertex falls within bbox.
+            if bbox_parsed is not None:
+                if not any(_bbox_contains(p[1], p[0], bbox_parsed) for p in line):
+                    continue
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": line},
+                "properties": _feeder_props(row),
+            })
+            if len(features) >= max_features:
+                truncated = True
+                break
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "meta": {
+            "layer": layer,
+            "feature_count": len(features),
+            "fallback": "latlon",
+            "truncated": truncated,
+        },
+    }
+
+
 @router.get("/layers/{layer}")
 def get_layer(
     layer: str,
@@ -198,6 +309,11 @@ def get_layer(
             "features": [],
             "meta": {"skipped": "zoom too low", "min_zoom": min_zoom, "zoom": zoom},
         }
+
+    # If the model has no PostGIS `geom` column, the SQL clustering path
+    # below would also fail — short-circuit to the lat/lon fallback.
+    if not hasattr(model, geom_attr):
+        return _latlon_layer_fallback(db, layer, bbox_parsed, status, max_features)
 
     # Optional clustering for meters at mid zoom (12-13): return grid centroids via ST_SnapToGrid.
     if layer == "meters" and zoom < 14:
@@ -237,6 +353,12 @@ def get_layer(
         ]
         return raw_features(features, meta={"clustered": True, "grid_deg": grid, "zoom": zoom})
 
+    # If the model has no PostGIS geom column (lat/lon-only schema), fall
+    # back to the Python-side builder so the layer renders even when the
+    # PostGIS-backed query path would AttributeError.
+    if not hasattr(model, geom_attr):
+        return _latlon_layer_fallback(db, layer, bbox_parsed, status, max_features)
+
     # Raw (non-cluster) query path.
     geom_col = getattr(model, geom_attr)
     q = db.query(model).filter(geom_col.isnot(None))
@@ -273,4 +395,55 @@ def list_layers(_: User = Depends(get_current_user)) -> Dict[str, Any]:
             {"name": name, "min_zoom": cfg[3]}
             for name, cfg in LAYER_CONFIG.items()
         ]
+    }
+
+
+# ── Admin hierarchy drill-down (zone → consumer) ────────────────────────────
+# See app.services.hierarchy for the static demo mapping.
+from app.services import hierarchy as hierarchy_svc  # noqa: E402
+
+
+@router.get("/hierarchy/tree")
+def hierarchy_tree(
+    parent_id: Optional[str] = Query(None, description="Parent node id (None = root zone)"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return children of a hierarchy node, with aggregate stats.
+
+    Hierarchy: zone → circle → division → subdivision → substation → feeder → dtr → consumer.
+    """
+    result = hierarchy_svc.get_tree_children(db, parent_id)
+    level = result.get("node", {}).get("level") if isinstance(result, dict) else None
+    if level:
+        result["commands"] = hierarchy_svc.get_commands_for_level(level)
+    return result
+
+
+@router.get("/hierarchy/boundaries")
+def hierarchy_boundaries(_: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Bounding polygons for zone/circle/division/subdivision levels (GeoJSON)."""
+    return hierarchy_svc.get_boundaries_geojson()
+
+
+@router.post("/hierarchy/command")
+def hierarchy_command(
+    payload: Dict[str, Any],
+    _: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Dispatch a hierarchy-level command. For the demo, commands are logged
+    and acknowledged. Real-world wiring (switching, SMS, crew dispatch) would
+    fan out to the respective microservices here."""
+    cmd = payload.get("cmd")
+    node_id = payload.get("node_id")
+    if not cmd or not node_id:
+        raise HTTPException(status_code=400, detail="cmd and node_id required")
+    node = hierarchy_svc.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"node {node_id} not found")
+    return {
+        "ok": True,
+        "action": cmd,
+        "node": {"id": node["id"], "name": node["name"], "level": node["level"]},
+        "message": f"{cmd} dispatched for {node['name']}",
     }
