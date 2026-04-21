@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     # ── MDMS Integration ──
     MDMS_BASE_URL: str = "http://mdms-api.mdms.svc.cluster.local:8080"
     MDMS_API_KEY: Optional[str] = None
+    # Read-only DSN for the MDMS CIS postgres (consumer_master_data). When
+    # unset, CIS consumer lookups return empty and the UI falls back to the
+    # locally-tagged consumer list. Example:
+    #   postgresql+psycopg2://postgres:***@mdms.dev.polagram.in:5432/db_cis
+    MDMS_CIS_DB_URL: Optional[str] = None
     MDMS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     MDMS_READ_TIMEOUT_SECONDS: float = 10.0
     MDMS_MAX_RETRIES: int = 3

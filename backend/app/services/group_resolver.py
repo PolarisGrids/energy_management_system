@@ -36,6 +36,7 @@ from typing import Iterable, List, Optional, Set
 
 from sqlalchemy.orm import Session
 
+from app.models.consumer_tag import ConsumerTag
 from app.models.meter import Feeder, Meter, Transformer
 from app.models.virtual_object_group import VirtualObjectGroup
 
@@ -65,6 +66,9 @@ def resolve_group_members(
     feeder_ids: Set[str] = set(_normalize_str_list(hierarchy.get("feeder_ids")))
     dtr_ids: Set[str] = set(_normalize_str_list(hierarchy.get("dtr_ids")))
     meter_serials: Set[str] = set(_normalize_str_list(hierarchy.get("meter_serials")))
+    # Alert Management — allow selecting by local consumer_tag.site_type so a
+    # "critical customers" group stays in sync as tags are added.
+    site_types: Set[str] = set(_normalize_str_list(hierarchy.get("site_types")))
 
     q = db.query(Meter.serial)
 
@@ -99,6 +103,13 @@ def resolve_group_members(
             .all()
         )
         serial_ors.extend([r[0] for r in ss_matches])
+    if site_types:
+        tag_matches = (
+            db.query(ConsumerTag.meter_serial)
+            .filter(ConsumerTag.site_type.in_(site_types))
+            .all()
+        )
+        serial_ors.extend([r[0] for r in tag_matches])
 
     if hierarchy:
         # Caller provided at least one hierarchy constraint — apply the OR.

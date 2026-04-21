@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
 from app.db.base import get_db
+from app.models.der_consumer import DERConsumer
 from app.models.der_ems import DERAssetEMS
 from app.models.user import User
 
@@ -44,14 +45,25 @@ class DERTelemetryPoint(BaseModel):
     state: Optional[str] = None
 
 
+class DERConsumerInline(BaseModel):
+    """Lightweight consumer summary embedded in asset rows (W5)."""
+
+    id: str
+    name: str
+    account_no: Optional[str] = None
+    tariff_code: Optional[str] = None
+
+
 class DERAssetLatest(BaseModel):
     id: str
     type: str
+    type_code: Optional[str] = None  # W5 sub-type
     name: Optional[str] = None
     dtr_id: Optional[str] = None
     feeder_id: Optional[str] = None
     capacity_kw: Optional[float] = None
     capacity_kwh: Optional[float] = None
+    consumer: Optional[DERConsumerInline] = None  # W5
     # Last-known telemetry fields (may be None when stream is silent)
     last_ts: Optional[str] = None
     current_output_kw: Optional[float] = None
@@ -74,6 +86,7 @@ class DERTelemetryResponse(BaseModel):
     asset_id: Optional[str] = None
     assets: List[DERAssetLatest]
     aggregate: List[DERAggregatePoint]
+    total_assets: Optional[int] = None  # W5 — pre-pagination count for UI paging
     banner: Optional[str] = None
 
 
@@ -101,6 +114,9 @@ _WINDOWS = {
     "1h": (timedelta(hours=1), 60),
     "24h": (timedelta(hours=24), 60),
     "7d": (timedelta(days=7), 15 * 60),
+    # W5 — 30-day window for the long-trend chart on fleet + detail pages.
+    # 1-hour buckets keep the response payload bounded (~720 points max).
+    "30d": (timedelta(days=30), 60 * 60),
 }
 
 
@@ -144,10 +160,27 @@ def _is_sqlite(db: Session) -> bool:
 @router.get("/telemetry", response_model=DERTelemetryResponse)
 def get_der_telemetry(
     type: Optional[Literal["pv", "bess", "ev", "ev_charger", "microgrid"]] = Query(
-        None, description="Filter by asset type"
+        None, description="Filter by top-level asset type"
     ),
-    window: Literal["1h", "24h", "7d"] = Query("24h"),
+    window: Literal["1h", "24h", "7d", "30d"] = Query("24h"),
     asset_id: Optional[str] = Query(None, description="Single asset drill-down"),
+    # ── W5 list filters ──
+    type_code: Optional[str] = Query(
+        None, description="Filter by der_type_catalog sub-type code"
+    ),
+    feeder_id: Optional[str] = Query(None, description="Filter by feeder"),
+    consumer_id: Optional[str] = Query(None, description="Filter by consumer/owner"),
+    state: Optional[str] = Query(
+        None, description="Filter by last-known state (online/offline/etc)"
+    ),
+    search: Optional[str] = Query(
+        None,
+        description="Case-insensitive substring match against asset id/name/dtr_id and consumer name/account_no",
+        min_length=1,
+        max_length=80,
+    ),
+    limit: int = Query(50, ge=1, le=500, description="Max assets per response"),
+    offset: int = Query(0, ge=0, description="Pagination offset for the asset list"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -172,16 +205,57 @@ def get_der_telemetry(
         db_type = "ev"
 
     # ── Assets ──
-    asset_q = db.query(DERAssetEMS)
+    # Outer-join consumer so search/listing can pull both sides in one query.
+    from sqlalchemy import func as _fn, or_
+
+    asset_q = db.query(DERAssetEMS, DERConsumer).outerjoin(
+        DERConsumer, DERConsumer.id == DERAssetEMS.consumer_id
+    )
     if db_type:
         asset_q = asset_q.filter(DERAssetEMS.type == db_type)
     if asset_id:
         asset_q = asset_q.filter(DERAssetEMS.id == asset_id)
-    asset_rows = asset_q.order_by(DERAssetEMS.id).all()
+    if type_code:
+        asset_q = asset_q.filter(DERAssetEMS.type_code == type_code)
+    if feeder_id:
+        asset_q = asset_q.filter(DERAssetEMS.feeder_id == feeder_id)
+    if consumer_id:
+        asset_q = asset_q.filter(DERAssetEMS.consumer_id == consumer_id)
+    if search:
+        like = f"%{search.lower()}%"
+        asset_q = asset_q.filter(
+            or_(
+                _fn.lower(DERAssetEMS.id).like(like),
+                _fn.lower(DERAssetEMS.name).like(like),
+                _fn.lower(DERAssetEMS.dtr_id).like(like),
+                _fn.lower(DERConsumer.name).like(like),
+                _fn.lower(DERConsumer.account_no).like(like),
+            )
+        )
+
+    # Pre-pagination total for UI paging controls. `state` is a telemetry
+    # field (not on der_asset), so we do *not* count-filter on it here —
+    # state filtering happens after telemetry join below.
+    total_assets = asset_q.with_entities(_fn.count(DERAssetEMS.id)).scalar() or 0
+
+    rows = (
+        asset_q.order_by(DERAssetEMS.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    asset_rows = [r[0] for r in rows]
+    consumer_by_asset = {r[0].id: r[1] for r in rows if r[1] is not None}
+
     if not asset_rows:
         return DERTelemetryResponse(
             type=type, window=window, asset_id=asset_id, assets=[], aggregate=[],
-            banner="No matching DER assets — simulator bulk-import may not have run yet.",
+            total_assets=int(total_assets),
+            banner=(
+                "No matching DER assets for the supplied filters."
+                if (search or type_code or feeder_id or consumer_id or state)
+                else "No matching DER assets — simulator bulk-import may not have run yet."
+            ),
         )
 
     # ── Latest-per-asset telemetry ──
@@ -189,20 +263,31 @@ def get_der_telemetry(
     banner: Optional[str] = None
     aggregate_rows: list = []
 
+    def _consumer_inline(asset_id_: str) -> Optional[DERConsumerInline]:
+        c = consumer_by_asset.get(asset_id_)
+        if c is None:
+            return None
+        return DERConsumerInline(
+            id=c.id, name=c.name,
+            account_no=c.account_no, tariff_code=c.tariff_code,
+        )
+
     if not _der_table_exists(db):
         banner = "der_telemetry table not provisioned — Kafka stream pending"
         for a in asset_rows:
             assets_out.append(
                 DERAssetLatest(
-                    id=a.id, type=a.type, name=a.name, dtr_id=a.dtr_id,
-                    feeder_id=a.feeder_id,
+                    id=a.id, type=a.type, type_code=a.type_code, name=a.name,
+                    dtr_id=a.dtr_id, feeder_id=a.feeder_id,
                     capacity_kw=float(a.capacity_kw) if a.capacity_kw is not None else None,
                     capacity_kwh=float(a.capacity_kwh) if a.capacity_kwh is not None else None,
+                    consumer=_consumer_inline(a.id),
                 )
             )
         return DERTelemetryResponse(
             type=type, window=window, asset_id=asset_id,
-            assets=assets_out, aggregate=[], banner=banner,
+            assets=assets_out, aggregate=[],
+            total_assets=int(total_assets), banner=banner,
         )
 
     asset_ids = [a.id for a in asset_rows]
@@ -241,29 +326,36 @@ def get_der_telemetry(
     for a in asset_rows:
         row = latest_by_asset.get(a.id)
         if row is None:
+            # `state` filter excludes silent assets — they have no last-known state.
+            if state:
+                continue
             assets_out.append(
                 DERAssetLatest(
-                    id=a.id, type=a.type, name=a.name, dtr_id=a.dtr_id,
-                    feeder_id=a.feeder_id,
+                    id=a.id, type=a.type, type_code=a.type_code, name=a.name,
+                    dtr_id=a.dtr_id, feeder_id=a.feeder_id,
                     capacity_kw=float(a.capacity_kw) if a.capacity_kw is not None else None,
                     capacity_kwh=float(a.capacity_kwh) if a.capacity_kwh is not None else None,
+                    consumer=_consumer_inline(a.id),
                 )
             )
             continue
-        (_, ts, state, ap, rp, soc, se, ar, cp) = row
+        (_, ts, st, ap, rp, soc, se, ar, cp) = row
+        if state and (st or "").lower() != state.lower():
+            continue
         assets_out.append(
             DERAssetLatest(
-                id=a.id, type=a.type, name=a.name, dtr_id=a.dtr_id,
-                feeder_id=a.feeder_id,
+                id=a.id, type=a.type, type_code=a.type_code, name=a.name,
+                dtr_id=a.dtr_id, feeder_id=a.feeder_id,
                 capacity_kw=float(a.capacity_kw) if a.capacity_kw is not None else None,
                 capacity_kwh=float(a.capacity_kwh) if a.capacity_kwh is not None else None,
+                consumer=_consumer_inline(a.id),
                 last_ts=ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                 current_output_kw=float(ap) if ap is not None else None,
                 soc_pct=float(soc) if soc is not None else None,
                 achievement_rate_pct=float(ar) if ar is not None else None,
                 curtailment_pct=float(cp) if cp is not None else None,
-                state=state,
-                inverter_online=(state or "").lower() in ("online", "running", "charging", "discharging") if state else None,
+                state=st,
+                inverter_online=(st or "").lower() in ("online", "running", "charging", "discharging") if st else None,
                 session_energy_kwh=float(se) if se is not None else None,
             )
         )
@@ -304,7 +396,8 @@ def get_der_telemetry(
 
     return DERTelemetryResponse(
         type=type, window=window, asset_id=asset_id,
-        assets=assets_out, aggregate=aggregate, banner=banner,
+        assets=assets_out, aggregate=aggregate,
+        total_assets=int(total_assets), banner=banner,
     )
 
 

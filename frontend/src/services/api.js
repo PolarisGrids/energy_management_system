@@ -71,9 +71,39 @@ export const derAPI = {
   get: (id) => api.get(`/der/${id}`),
   command: (id, cmd) => api.post(`/der/${id}/command`, cmd),
   // Spec 018 W3.T11/T12 — telemetry reads + feeder aggregation
+  // W5 — telemetry now accepts: type, window (1h|24h|7d|30d), asset_id,
+  // type_code, feeder_id, consumer_id, state, search, limit, offset.
   telemetry: (params = {}) => api.get('/der/telemetry', { params }),
   feederAggregate: (feederId, window = '24h') =>
     api.get(`/der/feeder/${feederId}/aggregate`, { params: { window } }),
+
+  // ── W5: type catalog ──
+  types: (category) =>
+    api.get('/der/types', { params: category ? { category } : {} }),
+
+  // ── W5: consumers ──
+  listConsumers: (params = {}) => api.get('/der/consumers', { params }),
+  getConsumer: (id) => api.get(`/der/consumers/${id}`),
+  createConsumer: (payload) => api.post('/der/consumers', payload),
+  updateConsumer: (id, payload) => api.patch(`/der/consumers/${id}`, payload),
+  deleteConsumer: (id, hard = false) =>
+    api.delete(`/der/consumers/${id}`, { params: { hard } }),
+  consumerAssets: (id) => api.get(`/der/consumers/${id}/assets`),
+
+  // ── W5: inverters ──
+  listInverters: (assetId) => api.get(`/der/${assetId}/inverters`),
+  createInverter: (assetId, payload) =>
+    api.post(`/der/${assetId}/inverters`, payload),
+  getInverter: (inverterId) => api.get(`/der/inverters/${inverterId}`),
+  updateInverter: (inverterId, payload) =>
+    api.patch(`/der/inverters/${inverterId}`, payload),
+  deleteInverter: (inverterId) => api.delete(`/der/inverters/${inverterId}`),
+  inverterTelemetry: (inverterId, params = {}) =>
+    api.get(`/der/inverters/${inverterId}/telemetry`, { params }),
+
+  // ── W5: metrology ──
+  metrology: (assetId, params = {}) =>
+    api.get(`/der/${assetId}/metrology`, { params }),
 }
 
 // Reverse-flow (spec 018 W3.T13)
@@ -112,6 +142,44 @@ export const sensorsAPI = {
   updateThreshold: (sensorId, data) => api.post(`/sensors/${sensorId}/threshold`, data),
 }
 
+// Virtual-object groups (used by alarm-rule builder to bind rules to DTRs)
+export const groupsAPI = {
+  list: (params) => api.get('/groups', { params }),
+  create: (payload) => api.post('/groups', payload),
+  get: (id) => api.get(`/groups/${id}`),
+  members: (id) => api.get(`/groups/${id}/members`),
+  delete: (id) => api.delete(`/groups/${id}`),
+}
+
+// Alarm rules (spec 018 W4.T4) — condition-AST driven rule engine
+export const alarmRulesAPI = {
+  list: (params) => api.get('/alarm-rules', { params }),
+  create: (payload) => api.post('/alarm-rules', payload),
+  get: (id) => api.get(`/alarm-rules/${id}`),
+  update: (id, payload) => api.patch(`/alarm-rules/${id}`, payload),
+  remove: (id) => api.delete(`/alarm-rules/${id}`),
+  firings: (id, limit = 50) => api.get(`/alarm-rules/${id}/firings`, { params: { limit } }),
+  deliveries: (id, limit = 100) => api.get(`/alarm-rules/${id}/deliveries`, { params: { limit } }),
+  acknowledge: (id, firingId, note) =>
+    api.post(`/alarm-rules/${id}/acknowledge`, { firing_id: firingId, note }),
+}
+
+// Alert Management (2026-04-21) — MDMS CIS consumers, site-type tags, default groups seed.
+export const alertMgmtAPI = {
+  // Consumers from MDMS db_cis.consumer_master_data overlayed with local site_type.
+  listConsumers: (params = {}) => api.get('/cis/consumers', { params }),
+  consumerStats: () => api.get('/cis/consumers/stats'),
+  consumerFeeders: () => api.get('/cis/consumers/feeders'),
+  // Site-type tag CRUD (PUT upserts keyed by meter_serial).
+  listTags: (params = {}) => api.get('/cis/tags', { params }),
+  upsertTag: (meterSerial, payload) => api.put(`/cis/tags/${meterSerial}`, payload),
+  deleteTag: (meterSerial) => api.delete(`/cis/tags/${meterSerial}`),
+  siteTypes: () => api.get('/cis/site-types'),
+  // Default-groups idempotent seeder (feeder-meters + critical-customers + two starter rules).
+  seedDefaults: () => api.post('/alert-mgmt/defaults'),
+  defaultsStatus: () => api.get('/alert-mgmt/defaults/status'),
+}
+
 // Simulation
 export const simulationAPI = {
   list: () => api.get('/simulation/'),
@@ -127,6 +195,20 @@ export const energyAPI = {
   loadProfile: (params) => api.get('/energy/load-profile', { params }),
   dailySummary: (params) => api.get('/energy/daily-summary', { params }),
   meterStatus: (params) => api.get('/energy/meter-status', { params }),
+}
+
+// Energy Savings Analysis (W5b) — org hierarchy, TOU tariff, appliance
+// shift scenarios. All endpoints are EMS-native; no MDMS proxy involved.
+export const energySavingsAPI = {
+  hierarchy: () => api.get('/energy-savings/hierarchy'),
+  tariff: () => api.get('/energy-savings/tariff'),
+  updateTariff: (payload) => api.put('/energy-savings/tariff', payload),
+  appliances: (orgUnitId) =>
+    api.get('/energy-savings/appliances', { params: { org_unit_id: orgUnitId } }),
+  summary: (orgUnitId) =>
+    api.get('/energy-savings/summary', { params: { org_unit_id: orgUnitId } }),
+  shiftScenario: (payload) => api.post('/energy-savings/shift-scenario', payload),
+  catalog: () => api.get('/energy-savings/catalog'),
 }
 
 // Reports
@@ -376,6 +458,55 @@ export const egsmReportsAPI = {
   runPost: (category, report, payload) =>
     api.post(`/reports/egsm/${category}/${report}`, payload),
   pollDownload: (id) => api.get('/reports/download', { params: { id } }),
+}
+
+// ─── Analytics-service EGSM reports ──
+// /api/v1/reports/egsm-analytics/* forwards to the mdms-analytics-service
+// routes under /api/v1/egsm-reports/* (distinct from the legacy /reports/egsm
+// path). Used by Energy Audit Master + Reliability Indices screens.
+export const energyAuditAPI = {
+  monthlyConsumption: (params) =>
+    api.get('/reports/egsm-analytics/energy-audit/monthly-consumption', { params }),
+  topFeeders: (params) =>
+    api.get('/reports/egsm-analytics/energy-audit/top-performing-feeders', { params }),
+  worstFeeders: (params) =>
+    api.get('/reports/egsm-analytics/energy-audit/worst-performing-feeders', { params }),
+  anomalyFeeders: (params) =>
+    api.get('/reports/egsm-analytics/energy-audit/anomaly-feeders', { params }),
+  allFeeders: (params) =>
+    api.get('/reports/egsm-analytics/energy-audit/all-feeders', { params }),
+}
+
+export const reliabilityIndicesAPI = {
+  stats: (params) =>
+    api.get('/reports/egsm-analytics/reliability-indices/stats', { params }),
+  feederLevel: (params) =>
+    api.get('/reports/egsm-analytics/reliability-indices/feeder-level-summary', { params }),
+  summary: (params) =>
+    api.get('/reports/egsm-analytics/reliability-indices/summary', { params }),
+  powerOutages: (params) =>
+    api.get('/reports/egsm-analytics/reliability-indices/power-outages', { params }),
+}
+
+export const hierarchyAPI = {
+  // Returns distinct zone/circle/division/subdivision/substation/feeder/
+  // feeder_category/dtr rows from MDMS. Pass filter keys (zone, circle,
+  // division, subdivision, substation_name, feeder_name, feeder_category,
+  // dtr_name, type) as query params to scope the dropdown options.
+  data: (params) =>
+    api.get('/reports/egsm-analytics/hierarchy-data', { params }),
+}
+
+// CSV download pipeline (mdms-analytics S3+SQS). Kicks off generation,
+// polls status, and streams the finished file.
+export const egsmDownloadsAPI = {
+  request: (payload) =>
+    api.post('/reports/egsm-analytics/downloads/request', payload),
+  logs: (params) =>
+    api.get('/reports/egsm-analytics/downloads/logs', { params }),
+  configs: () =>
+    api.get('/reports/egsm-analytics/downloads/configs/report-names'),
+  fileUrl: (id) => `/api/v1/reports/egsm-analytics/downloads/${id}/file`,
 }
 
 export default api

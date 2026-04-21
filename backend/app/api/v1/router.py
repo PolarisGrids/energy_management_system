@@ -13,6 +13,12 @@ from app.api.v1.endpoints import der_bulk, fota
 from app.api.v1.endpoints import gis, ntl
 # Spec 018 W3 — DER telemetry read + feeder aggregation + scenario proxy + reverse-flow
 from app.api.v1.endpoints import der_telemetry as der_telemetry_ep
+# W5 — consumer + type-catalog, inverter equipment + telemetry, DER metrology.
+from app.api.v1.endpoints import (
+    der_consumer as der_consumer_ep,
+    der_inverter as der_inverter_ep,
+    der_metrology as der_metrology_ep,
+)
 from app.api.v1.endpoints import simulation_proxy, reverse_flow
 # Spec 018 W3 — outage management + outage GIS overlay
 from app.api.v1.endpoints import outage as outage_ep
@@ -64,6 +70,10 @@ api_router.include_router(ntl.router,          prefix="/ntl",         tags=["ntl
 # Spec 018 W3 DER/Scenario track — telemetry reads under /der, scenario proxy
 # under /simulation-proxy to avoid clashing with the local /simulation engine.
 api_router.include_router(der_telemetry_ep.router, prefix="/der",              tags=["der-telemetry"])
+# W5 — consumer + type-catalog, inverter equipment + telemetry, DER metrology.
+api_router.include_router(der_consumer_ep.router,   prefix="/der",              tags=["der-consumer"])
+api_router.include_router(der_inverter_ep.router,   prefix="/der",              tags=["der-inverter"])
+api_router.include_router(der_metrology_ep.router,  prefix="/der",              tags=["der-metrology"])
 api_router.include_router(simulation_proxy.router, prefix="/simulation-proxy", tags=["simulation-proxy"])
 api_router.include_router(reverse_flow.router,     prefix="/reverse-flow",     tags=["reverse-flow"])
 
@@ -76,6 +86,7 @@ api_router.include_router(gis_outages.router,      prefix="/gis",               
 # Spec 018 W4 — virtual object groups + alarm-rule CRUD.
 api_router.include_router(groups_ep.router,        prefix="/groups",            tags=["groups"])
 api_router.include_router(alarm_rules_ep.router,   prefix="/alarm-rules",       tags=["alarm-rules"])
+
 
 # Spec 018 W4.T6 — AppBuilder CRUD (/apps, /app-rules, /algorithms). Each
 # sub-router already declares its own prefix so no extra prefix here.
@@ -111,3 +122,11 @@ api_router.include_router(notifications.router,  prefix="/notifications", tags=[
 # {ok, data, source, as_of} envelope with source ∈ {mdms, ems-local, partial}.
 api_router.include_router(consumption_ep.router,   prefix="/consumption",        tags=["consumption"])
 api_router.include_router(devices_ep.router,       prefix="/devices",            tags=["devices"])
+
+# Alert Management (2026-04-21) — MDMS CIS consumers + local site-type tags +
+# default-groups seeder. Late-imported to mirror the dashboards / data-accuracy
+# pattern above so the top-level import block stays stable.
+from app.api.v1.endpoints import cis_consumers as cis_consumers_ep  # noqa: E402
+from app.api.v1.endpoints import alert_defaults as alert_defaults_ep  # noqa: E402
+api_router.include_router(cis_consumers_ep.router, prefix="/cis",                tags=["cis-consumers"])
+api_router.include_router(alert_defaults_ep.router, prefix="/alert-mgmt",        tags=["alert-mgmt"])

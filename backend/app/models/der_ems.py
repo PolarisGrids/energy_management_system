@@ -37,6 +37,13 @@ class DERAssetEMS(Base):
     lon = Column(Numeric(10, 6), nullable=True)
     capacity_kw = Column(Numeric(10, 2), nullable=True)
     capacity_kwh = Column(Numeric(10, 2), nullable=True)  # BESS only
+    # W5 — owner + sub-type taxonomy. Both nullable for legacy rows.
+    consumer_id = Column(
+        String(36), ForeignKey("der_consumer.id"), nullable=True, index=True
+    )
+    type_code = Column(
+        String(40), ForeignKey("der_type_catalog.code"), nullable=True, index=True
+    )
     asset_metadata = Column("metadata", _json_col(), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
