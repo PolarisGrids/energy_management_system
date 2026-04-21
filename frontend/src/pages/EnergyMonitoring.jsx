@@ -3,11 +3,12 @@ import {
   Zap, TrendingUp, TrendingDown, Activity, BarChart2,
   Database, CheckCircle, AlertTriangle, RefreshCw, Filter,
   ArrowRight, ArrowUp, Layers, Users, Building2, Home,
-  Info,
+  Info, DollarSign,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
 import { metersAPI, energyAPI, consumptionAPI, devicesAPI } from '@/services/api'
 import { DeviceSearch, DateRangePicker, defaultRange, todayIso } from '@/components/ui'
+import SavingsAnalysisTab from '@/components/energy/SavingsAnalysisTab'
 
 // Banner shown when MDMS is not the data source. Never a fallback number.
 const SourceBanner = ({ source, asOf, message }) => {
@@ -665,6 +666,7 @@ function DataMonitoringTab({ meterRows, loading, error, onRetry }) {
 const TABS = [
   { id: 'overview',     label: 'Energy Overview',      icon: Activity },
   { id: 'consumption',  label: 'Consumption Analysis', icon: BarChart2 },
+  { id: 'savings',      label: 'Savings Analysis',     icon: DollarSign },
   { id: 'monitoring',   label: 'Data Monitoring',      icon: Database },
 ]
 
@@ -856,6 +858,7 @@ export default function EnergyMonitoring() {
             setDevice={setDevice}
           />
         )}
+        {activeTab === 'savings'     && <SavingsAnalysisTab />}
         {activeTab === 'monitoring'  && <DataMonitoringTab meterRows={meterRows} loading={loading} error={error} onRetry={loadSummary} />}
       </div>
     </div>

@@ -30,6 +30,9 @@ from app.models.mdms import (
     VEEDailySummary, VEEException, ConsumerAccount,
     TariffSchedule, NTLSuspect, PowerQualityZone,
 )
+from app.models.energy_savings import (
+    OrgUnit, ApplianceCatalog, ApplianceUsage,
+)
 from app.core.security import get_password_hash
 
 
@@ -1468,35 +1471,60 @@ def seed_simulation_scenarios(db, feeders, transformers, pv, ev, mg):
 
 
 def seed_transformer_sensors(db, transformers):
-    """Seed DCU-connected sensors for key transformers (REQ-25)."""
+    """Seed DCU-connected sensors for key transformers (REQ-25).
+
+    Extended for LV/DTR monitoring: adds voltage_phase_a/b/c, partial_discharge,
+    noise_db, buchholz_status. Idempotent — existing (transformer_id,
+    sensor_type) pairs are left untouched so new types can be backfilled onto
+    already-seeded databases.
+    """
     # Sensor definitions: (sensor_type, name, unit, default_value, warning, critical)
+    # Buchholz status is coded: 0=OK, 1=Alarm (gas), 2=Trip (oil surge).
     SENSOR_DEFS = [
-        ("winding_temp",    "Winding Temperature",  "degC",  65.0, 80.0,  90.0),
-        ("oil_temp",        "Oil Temperature",      "degC",  55.0, 70.0,  80.0),
-        ("oil_level",       "Oil Level",            "%",     95.0, 90.0,  82.0),   # reverse: warning when LOW
-        ("vibration",       "Vibration",            "mm/s",   0.5,  1.5,   2.5),
-        ("humidity",        "Humidity",             "%",     35.0, 50.0,  65.0),
-        ("current_phase_a", "Current Phase A",      "A",    280.0, 400.0, 450.0),
-        ("current_phase_b", "Current Phase B",      "A",    275.0, 400.0, 450.0),
-        ("current_phase_c", "Current Phase C",      "A",    282.0, 400.0, 450.0),
+        ("winding_temp",      "Winding Temperature",   "degC",  65.0,  80.0,  90.0),
+        ("oil_temp",          "Oil Temperature",       "degC",  55.0,  70.0,  80.0),
+        ("oil_level",         "Oil Level",             "%",     95.0,  90.0,  82.0),   # reverse: warning when LOW
+        ("vibration",         "Vibration",             "mm/s",   0.5,   1.5,   2.5),
+        ("humidity",          "Humidity",              "%",     35.0,  50.0,  65.0),
+        ("current_phase_a",   "Current Phase A",       "A",    280.0, 400.0, 450.0),
+        ("current_phase_b",   "Current Phase B",       "A",    275.0, 400.0, 450.0),
+        ("current_phase_c",   "Current Phase C",       "A",    282.0, 400.0, 450.0),
+        # LV/DTR extension — per-phase voltages (nominal 230 V, ±10%/±15%)
+        ("voltage_phase_a",   "Voltage Phase A",       "V",    230.0, 253.0, 264.5),
+        ("voltage_phase_b",   "Voltage Phase B",       "V",    229.0, 253.0, 264.5),
+        ("voltage_phase_c",   "Voltage Phase C",       "V",    231.0, 253.0, 264.5),
+        # Condition monitoring
+        ("partial_discharge", "Partial Discharge",     "pC",   250.0, 500.0, 1000.0),
+        ("noise_db",          "Acoustic Noise",        "dB",    62.0,  75.0,  85.0),
+        # Protection — discrete state
+        ("buchholz_status",   "Buchholz Relay Status", "code",   0.0,   1.0,   2.0),
     ]
 
     # Instrument 4 key transformers: T-005 (primary scenario), plus 3 others
     target_indices = [4, 5, 10, 15]
     total = 0
 
+    # Idempotent upsert: skip (transformer_id, sensor_type) pairs already present.
+    existing = {
+        (s.transformer_id, s.sensor_type)
+        for s in db.query(TransformerSensor).all()
+    }
+
     for t_idx in target_indices:
         if t_idx >= len(transformers):
             continue
         transformer = transformers[t_idx]
         for stype, sname, unit, default_val, warn, crit in SENSOR_DEFS:
-            # Add slight variation per transformer
+            if (transformer.id, stype) in existing:
+                continue
             variation = random.uniform(0.95, 1.05)
+            # Discrete-state sensors (Buchholz) must not randomise — stay at OK.
+            seed_value = default_val if stype == "buchholz_status" else round(default_val * variation, 1)
             sensor = TransformerSensor(
                 transformer_id=transformer.id,
                 sensor_type=stype,
                 name=f"{sname} — {transformer.name}",
-                value=round(default_val * variation, 1),
+                value=seed_value,
                 unit=unit,
                 threshold_warning=warn,
                 threshold_critical=crit,
@@ -1506,7 +1534,90 @@ def seed_transformer_sensors(db, transformers):
             total += 1
 
     db.commit()
-    print(f"  Transformer sensors seeded: {total} sensors on {len(target_indices)} transformers")
+    print(f"  Transformer sensors seeded: {total} new sensor(s) across {len(target_indices)} transformers")
+
+
+
+def seed_energy_savings(db, meters):
+    """Seed org_unit tree + per-customer appliance_usage rows. Idempotent."""
+    if db.query(OrgUnit).count() > 0:
+        print("  Energy-savings org tree already seeded, skipping.")
+        return
+    catalog = {c.code: c for c in db.query(ApplianceCatalog).all()}
+    if not catalog:
+        print("  WARNING: appliance_catalog empty — alembic missing? Skipping.")
+        return
+    import uuid as _uuid
+    def _new_id() -> str:
+        return str(_uuid.uuid4())
+    company = OrgUnit(id=_new_id(), parent_id=None, level="company",
+                      name="Polaris Utility Co.", code="POLARIS")
+    db.add(company); db.flush()
+    departments = {}
+    for dept_name, dept_code in [
+        ("Residential Services", "RES"),
+        ("Commercial & Industrial", "CNI"),
+        ("Municipal & EV", "MEV"),
+    ]:
+        d = OrgUnit(id=_new_id(), parent_id=company.id, level="department",
+                    name=dept_name, code=dept_code)
+        db.add(d); db.flush(); departments[dept_code] = d
+    branch_by_area = {}
+    branch_specs = [
+        ("Soweto North",    "RES", "BR-SWN", ["ac_split_18k", "geyser_3kw", "lighting_led"]),
+        ("Mitchell Plain",  "RES", "BR-MTP", ["ac_split_18k", "geyser_3kw", "water_pump_1hp"]),
+        ("Durban Central",  "RES", "BR-DBC", ["ac_split_18k", "geyser_3kw", "ev_charger_l2"]),
+        ("Sandton CBD",     "CNI", "BR-SAN", ["ac_central_5hp", "lighting_led", "ev_charger_l2"]),
+        ("Pretoria East",   "MEV", "BR-PTE", ["ev_charger_dc", "water_pump_5hp", "lighting_led"]),
+    ]
+    for area_name, dept_code, code, _ in branch_specs:
+        b = OrgUnit(id=_new_id(), parent_id=departments[dept_code].id, level="branch",
+                    name=area_name, code=code)
+        db.add(b); db.flush(); branch_by_area[area_name] = b
+    area_by_prefix = {
+        "SA01": "Soweto North", "SA02": "Sandton CBD", "SA03": "Mitchell Plain",
+        "SA04": "Durban Central", "SA05": "Pretoria East",
+    }
+    by_area: dict[str, list[Meter]] = {name: [] for name in branch_by_area}
+    for m in meters:
+        area = area_by_prefix.get(m.serial[:4])
+        if area:
+            by_area[area].append(m)
+    customer_spec = {n: s for n, d, c, s in branch_specs}
+    usage_count = 0
+    for area_name, branch in branch_by_area.items():
+        cand = by_area.get(area_name, [])[:3]
+        if not cand:
+            continue
+        for m in cand:
+            cust = OrgUnit(id=_new_id(), parent_id=branch.id, level="customer",
+                           name=m.customer_name or f"Customer {m.serial[-4:]}",
+                           code=m.account_number, meter_serial=m.serial)
+            db.add(cust); db.flush()
+            for code in customer_spec[area_name]:
+                cat = catalog.get(code)
+                if not cat:
+                    continue
+                t = float(cat.typical_running_hours)
+                cap = float(cat.shiftable_hours)
+                if cat.category in ("ac", "ev_charger") and cat.code != "ev_charger_l2":
+                    ph, sh = round(t*0.5, 2), round(t*0.35, 2)
+                elif cat.category in ("geyser", "water_pump"):
+                    ph, sh = round(t*0.25, 2), round(t*0.25, 2)
+                elif cat.code == "ev_charger_l2":
+                    ph, sh = 0.0, round(t*0.2, 2)
+                else:
+                    ph, sh = round(t*0.4, 2), round(t*0.4, 2)
+                oh = round(t - ph - sh, 2)
+                usage = ApplianceUsage(id=_new_id(), org_unit_id=cust.id,
+                                        appliance_code=code, count=1,
+                                        peak_hours=ph, standard_hours=sh,
+                                        offpeak_hours=oh,
+                                        shiftable_peak_hours=round(min(ph, cap), 2))
+                db.add(usage); usage_count += 1
+    db.commit()
+    print(f"  Energy-savings seeded: 1 company, {len(departments)} departments, "
+          f"{len(branch_by_area)} branches, {usage_count} appliance-usage rows.")
 
 
 def _refresh_simulation_scenarios(db):
@@ -1566,6 +1677,13 @@ def main():
             # parameters roll in without a full DB wipe. Safe because the
             # scenarios table is a presentation artefact, not load-bearing data.
             _refresh_simulation_scenarios(db)
+            # LV/DTR expansion — backfill any newly added sensor types
+            # (voltage_phase_*, partial_discharge, noise_db, buchholz_status)
+            # onto existing instrumented transformers. Idempotent — no-op when
+            # all sensor types are already present.
+            transformers = db.query(Transformer).order_by(Transformer.id).all()
+            if transformers:
+                seed_transformer_sensors(db, transformers)
             return
 
         print("Seeding SA LV network (feeders, transformers, meters)...")
@@ -1600,6 +1718,9 @@ def main():
 
         print("Seeding Alert Management default groups + critical-customer tags...")
         seed_alert_defaults(db)
+
+        print("Seeding energy-savings org tree + appliances...")
+        seed_energy_savings(db, meters)
 
         print("\nSeed complete!")
         print(f"  Users:       3 (admin/Admin@2026, supervisor/Super@2026, operator/Oper@2026)")

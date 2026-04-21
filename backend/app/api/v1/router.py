@@ -130,3 +130,7 @@ from app.api.v1.endpoints import cis_consumers as cis_consumers_ep  # noqa: E402
 from app.api.v1.endpoints import alert_defaults as alert_defaults_ep  # noqa: E402
 api_router.include_router(cis_consumers_ep.router, prefix="/cis",                tags=["cis-consumers"])
 api_router.include_router(alert_defaults_ep.router, prefix="/alert-mgmt",        tags=["alert-mgmt"])
+
+# W5b — Energy Saving Analysis (org hierarchy + appliance shift scenarios).
+from app.api.v1.endpoints import energy_savings as energy_savings_ep  # noqa: E402
+api_router.include_router(energy_savings_ep.router, prefix="/energy-savings",    tags=["energy-savings"])
