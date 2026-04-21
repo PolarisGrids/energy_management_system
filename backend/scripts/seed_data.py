@@ -1500,8 +1500,11 @@ def seed_transformer_sensors(db, transformers):
         ("buchholz_status",   "Buchholz Relay Status", "code",   0.0,   1.0,   2.0),
     ]
 
-    # Instrument 4 key transformers: T-005 (primary scenario), plus 3 others
-    target_indices = [4, 5, 10, 15]
+    # Instrument every transformer. T-005 is the scenario transformer (picked
+    # below for CRITICAL demo state); the rest default to NORMAL with two
+    # specific IDs forced to WARNING so the aggregate shows 2 warning + 1
+    # critical across the fleet.
+    target_indices = list(range(len(transformers)))
     total = 0
 
     # Idempotent upsert: skip (transformer_id, sensor_type) pairs already present.
@@ -1511,8 +1514,6 @@ def seed_transformer_sensors(db, transformers):
     }
 
     for t_idx in target_indices:
-        if t_idx >= len(transformers):
-            continue
         transformer = transformers[t_idx]
         for stype, sname, unit, default_val, warn, crit in SENSOR_DEFS:
             if (transformer.id, stype) in existing:
@@ -1535,6 +1536,51 @@ def seed_transformer_sensors(db, transformers):
 
     db.commit()
     print(f"  Transformer sensors seeded: {total} new sensor(s) across {len(target_indices)} transformers")
+
+    # Force the demo status distribution across the fleet: exactly 1 critical
+    # and 2 warning transformers. Re-applied on every seed run so operators
+    # always land on the documented demo state regardless of prior edits.
+    # Picks scenario transformer T-005 (index 4) for CRITICAL and the next two
+    # sensor-instrumented transformers for WARNING.
+    if len(transformers) >= 11:
+        critical_tx = transformers[4]   # T-005 — scenario transformer
+        warning_tx_a = transformers[5]  # T-006
+        warning_tx_b = transformers[10] # T-011
+
+        # Reset every sensor back to NORMAL first, so we don't leave stale
+        # warning/critical flags lying around after a reseed.
+        db.query(TransformerSensor).update(
+            {TransformerSensor.status: SensorStatus.NORMAL},
+            synchronize_session=False,
+        )
+
+        # T-005 — CRITICAL (hot windings + warning oil temp)
+        db.query(TransformerSensor).filter(
+            TransformerSensor.transformer_id == critical_tx.id,
+            TransformerSensor.sensor_type == "winding_temp",
+        ).update({"value": 94.2, "status": SensorStatus.CRITICAL}, synchronize_session=False)
+        db.query(TransformerSensor).filter(
+            TransformerSensor.transformer_id == critical_tx.id,
+            TransformerSensor.sensor_type == "oil_temp",
+        ).update({"value": 83.5, "status": SensorStatus.WARNING}, synchronize_session=False)
+
+        # T-006 — WARNING (elevated oil temp)
+        db.query(TransformerSensor).filter(
+            TransformerSensor.transformer_id == warning_tx_a.id,
+            TransformerSensor.sensor_type == "oil_temp",
+        ).update({"value": 73.1, "status": SensorStatus.WARNING}, synchronize_session=False)
+
+        # T-011 — WARNING (raised vibration)
+        db.query(TransformerSensor).filter(
+            TransformerSensor.transformer_id == warning_tx_b.id,
+            TransformerSensor.sensor_type == "vibration",
+        ).update({"value": 1.82, "status": SensorStatus.WARNING}, synchronize_session=False)
+
+        db.commit()
+        print(
+            f"  Demo status set: CRITICAL={critical_tx.name}, "
+            f"WARNING={warning_tx_a.name}, {warning_tx_b.name}"
+        )
 
 
 
