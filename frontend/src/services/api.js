@@ -364,6 +364,15 @@ export const gisAPI = {
     api.post('/gis/hierarchy/command', { cmd, node_id: nodeId }),
 }
 
+// ─── SMOC-12 System Management — meter + LV device registry + performance ──
+export const systemManagementAPI = {
+  meterRegistry:        () => api.get('/system-management/meter-registry'),
+  deviceRegistry:       () => api.get('/system-management/device-registry'),
+  supplierPerformance:  () => api.get('/system-management/supplier-performance'),
+  equipmentPerformance: () => api.get('/system-management/equipment-performance'),
+  assetSearch:         (params) => api.get('/system-management/asset-search', { params }),
+}
+
 // ─── NTL (spec 018 W3.T8/T9/T10) — suspects + energy-balance dashboard ───────
 export const ntlAPI = {
   suspects: (params) => api.get('/ntl/suspects', { params }),

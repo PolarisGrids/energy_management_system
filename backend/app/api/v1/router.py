@@ -11,6 +11,7 @@ from app.api.v1.endpoints import devices as devices_ep
 from app.api.v1.endpoints import der_bulk, fota
 # Spec 018 W3 — GIS topology layers + NTL dashboard (GIS/NTL/energy-balance track)
 from app.api.v1.endpoints import gis, ntl
+from app.api.v1.endpoints import system_management as system_management_ep
 # Spec 018 W3 — DER telemetry read + feeder aggregation + scenario proxy + reverse-flow
 from app.api.v1.endpoints import der_telemetry as der_telemetry_ep
 # W5 — consumer + type-catalog, inverter equipment + telemetry, DER metrology.
@@ -66,6 +67,13 @@ api_router.include_router(mdms_proxy.router,   prefix="/mdms",        tags=["mdm
 # Spec 018 W3 — GIS GeoJSON layers + NTL dashboard endpoints.
 api_router.include_router(gis.router,          prefix="/gis",         tags=["gis"])
 api_router.include_router(ntl.router,          prefix="/ntl",         tags=["ntl"])
+
+# SMOC-12 — system management registry + performance pages.
+api_router.include_router(
+    system_management_ep.router,
+    prefix="/system-management",
+    tags=["system-management"],
+)
 
 # Spec 018 W3 DER/Scenario track — telemetry reads under /der, scenario proxy
 # under /simulation-proxy to avoid clashing with the local /simulation engine.
