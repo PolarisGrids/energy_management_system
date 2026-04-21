@@ -70,6 +70,18 @@ const STATUS_COLOR = {
   disconnected: '#F97316',
 }
 
+// SMOC-FUNC-026-FR-03 — consumption quartile palette. Deep red = top quartile
+// consumer, blue = lowest. Meters with no consumption show mid-grey so
+// offline / unread meters are distinguishable from the cohort.
+const CONSUMPTION_QUARTILE_COLOR = (kwh, quartiles) => {
+  if (!quartiles) return '#6B7280'
+  if (kwh == null || kwh <= 0) return '#4B5563'
+  if (kwh <= quartiles.q1) return '#2563EB'   // Q1 — lowest
+  if (kwh <= quartiles.q2) return '#06B6D4'   // Q2
+  if (kwh <= quartiles.q3) return '#F59E0B'   // Q3
+  return '#EF4444'                            // Q4 — highest
+}
+
 const DER_COLOR = {
   pv:          '#F59E0B',
   bess:        '#56CCF2',
@@ -159,6 +171,9 @@ export default function GISMap() {
     outage: true,
     alarm_heat: false,
     ntl_suspects: false,
+    // SMOC-FUNC-026-FR-03 — consumption quartile overlay (off by default;
+    // operator toggles on at feeder zoom to see hot spots).
+    consumption: false,
   })
 
   // Data
@@ -169,6 +184,8 @@ export default function GISMap() {
   const [ntlSuspectsFC, setNtlSuspectsFC] = useState({ features: [] })
   const [outageOverlay, setOutageOverlay] = useState({ features: [] })
   const [ders, setDers] = useState([])
+  // SMOC-FUNC-026-FR-03 — per-meter daily kWh + precomputed quartile cuts.
+  const [consumption, setConsumption] = useState({ meters: {}, quartiles: null })
   const [loading, setLoading] = useState(true)
 
   // Context menu state
@@ -226,6 +243,12 @@ export default function GISMap() {
     if (!layers.ntl_suspects) return
     safeGet(() => ntlAPI.suspectsGeoJson(bbox)).then(r => r && setNtlSuspectsFC(r.data))
   }, [layers.ntl_suspects, bbox])
+
+  // Consumption quartile overlay — lazy, fetched once per toggle + bbox change.
+  useEffect(() => {
+    if (!layers.consumption) return
+    safeGet(() => gisAPI.meterConsumption(24, bbox)).then(r => r && setConsumption(r.data))
+  }, [layers.consumption, bbox])
 
   // Outage overlay (Agent H's `/api/v1/gis/outages`) — lazy.
   useEffect(() => {
@@ -474,11 +497,22 @@ export default function GISMap() {
                       pathOptions={{ color, weight: 3, opacity: 0.8 }}
                       eventHandlers={{ contextmenu: (e) => handleContextMenu(e, { ...f.properties, type: 'feeder' }) }}>
                       <Popup>
-                        <div style={{ fontFamily: 'Satoshi, sans-serif' }}>
+                        <div style={{ fontFamily: 'Satoshi, sans-serif', minWidth: 200 }}>
                           <b>{f.properties?.name}</b><br />
                           Substation: {f.properties?.substation}<br />
                           Voltage: {f.properties?.voltage_kv} kV<br />
                           Loading: {loadingPct ?? '—'}%
+                          <br />
+                          <button
+                            onClick={() => navigate(`/energy?feeder=${f.properties?.id}`)}
+                            style={{
+                              marginTop: 6, padding: '4px 8px', fontSize: 11, fontWeight: 700,
+                              border: 'none', borderRadius: 4, cursor: 'pointer',
+                              background: '#3B82F6', color: '#fff',
+                            }}
+                          >
+                            Open in Dashboard →
+                          </button>
                         </div>
                       </Popup>
                     </Polyline>
@@ -500,10 +534,21 @@ export default function GISMap() {
                       pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 2 }}
                       eventHandlers={{ contextmenu: (e) => handleContextMenu(e, { ...f.properties, type: 'dtr' }) }}>
                       <Popup>
-                        <div style={{ fontFamily: 'Satoshi, sans-serif' }}>
+                        <div style={{ fontFamily: 'Satoshi, sans-serif', minWidth: 200 }}>
                           <b>{f.properties?.name}</b><br />
                           Load: {pct ?? '—'}%<br />
                           Capacity: {f.properties?.capacity_kva} kVA
+                          <br />
+                          <button
+                            onClick={() => navigate(`/sensors?transformer=${f.properties?.id}`)}
+                            style={{
+                              marginTop: 6, padding: '4px 8px', fontSize: 11, fontWeight: 700,
+                              border: 'none', borderRadius: 4, cursor: 'pointer',
+                              background: '#3B82F6', color: '#fff',
+                            }}
+                          >
+                            Open in Dashboard →
+                          </button>
                         </div>
                       </Popup>
                     </CircleMarker>
@@ -519,17 +564,40 @@ export default function GISMap() {
                   const [lon, lat] = f.geometry?.coordinates ?? []
                   if (lat == null || lon == null) return null
                   const p = f.properties || {}
-                  const color = STATUS_COLOR[p.status] ?? '#6B7280'
+                  const daily_kwh = consumption.meters?.[p.serial]
+                  // Consumption overlay overrides the default status palette
+                  // so the top quartile is instantly visible. SMOC-FUNC-026-FR-03.
+                  const color = layers.consumption
+                    ? CONSUMPTION_QUARTILE_COLOR(daily_kwh, consumption.quartiles)
+                    : (STATUS_COLOR[p.status] ?? '#6B7280')
                   return (
                     <CircleMarker key={`m-${i}`} center={[lat, lon]} radius={5}
                       pathOptions={{ color, fillColor: color, fillOpacity: 0.85, weight: 1 }}
                       eventHandlers={{ contextmenu: (e) => handleContextMenu(e, { ...p, type: 'meter' }) }}>
                       <Popup>
-                        <div style={{ fontFamily: 'Satoshi, sans-serif', minWidth: 200 }}>
+                        <div style={{ fontFamily: 'Satoshi, sans-serif', minWidth: 220 }}>
                           <b>{p.serial}</b><br />
                           {p.customer_name}<br />
                           <span style={{ color }}>● {p.status}</span> · {p.meter_type}<br />
-                          <span style={{ fontSize: 11, color: '#999' }}>Right-click for actions</span>
+                          {layers.consumption && (
+                            <>
+                              <span style={{ fontSize: 12 }}>
+                                24h consumption: <b>{daily_kwh != null ? `${daily_kwh.toFixed(1)} kWh` : '—'}</b>
+                              </span>
+                              <br />
+                            </>
+                          )}
+                          <button
+                            onClick={() => navigate(`/meters?serial=${p.serial}`)}
+                            style={{
+                              marginTop: 6, padding: '4px 8px', fontSize: 11, fontWeight: 700,
+                              border: 'none', borderRadius: 4, cursor: 'pointer',
+                              background: '#3B82F6', color: '#fff',
+                            }}
+                          >
+                            Open in Dashboard →
+                          </button>
+                          <div style={{ fontSize: 10, color: '#999', marginTop: 4 }}>Right-click for actions</div>
                         </div>
                       </Popup>
                     </CircleMarker>
@@ -653,6 +721,22 @@ export default function GISMap() {
         )}
         {layers.ntl_suspects && (
           <span className="text-xs text-white/60">{suspectCount} NTL suspects</span>
+        )}
+        {layers.consumption && consumption.quartiles && (
+          <span className="text-xs text-white/60 flex items-center gap-1.5">
+            Consumption (24h):
+            {[
+              { c: '#2563EB', l: `≤${consumption.quartiles.q1}` },
+              { c: '#06B6D4', l: `≤${consumption.quartiles.q2}` },
+              { c: '#F59E0B', l: `≤${consumption.quartiles.q3}` },
+              { c: '#EF4444', l: `>${consumption.quartiles.q3}` },
+            ].map((q) => (
+              <span key={q.c} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: q.c, display: 'inline-block' }} />
+                <span>{q.l} kWh</span>
+              </span>
+            ))}
+          </span>
         )}
         <div className="ml-auto"><ZoomBreadcrumb zoom={zoom} /></div>
       </div>

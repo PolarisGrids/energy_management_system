@@ -6,13 +6,15 @@
 import { Layers } from 'lucide-react'
 
 const LAYER_CONFIG = [
-  { key: 'feeder',       label: 'Feeders',        color: '#ABC7FF' },
-  { key: 'dtr',          label: 'DTRs',           color: '#56CCF2' },
-  { key: 'pole',         label: 'Poles',          color: '#93C5FD' },
-  { key: 'meter',        label: 'Meters',         color: '#02C9A8' },
-  { key: 'outage',       label: 'Outages',        color: '#E94B4B' },
-  { key: 'alarm_heat',   label: 'Alarm heatmap',  color: '#F97316' },
-  { key: 'ntl_suspects', label: 'NTL suspects',   color: '#F59E0B' },
+  { key: 'feeder',       label: 'Feeders',            color: '#ABC7FF' },
+  { key: 'dtr',          label: 'DTRs',               color: '#56CCF2' },
+  { key: 'pole',         label: 'Poles',              color: '#93C5FD' },
+  { key: 'meter',        label: 'Meters',             color: '#02C9A8' },
+  { key: 'outage',       label: 'Outages',            color: '#E94B4B' },
+  { key: 'alarm_heat',   label: 'Alarm heatmap',      color: '#F97316' },
+  { key: 'ntl_suspects', label: 'NTL suspects',       color: '#F59E0B' },
+  // SMOC-FUNC-026-FR-03 — colour meters by consumption quartile.
+  { key: 'consumption',  label: 'Consumption',        color: '#EF4444' },
 ]
 
 export default function LayerSwitcher({ layers, onToggle }) {

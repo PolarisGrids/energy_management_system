@@ -353,6 +353,9 @@ export const gisAPI = {
   },
   heatmapAlarms: (bbox, gridDeg = 0.1) =>
     api.get('/gis/heatmap/alarms', { params: { bbox, grid_deg: gridDeg } }),
+  // SMOC-FUNC-026-FR-03 — consumption quartile overlay (daily kWh per meter).
+  meterConsumption: (hours = 24, bbox) =>
+    api.get('/gis/meter-consumption', { params: { hours, bbox } }),
   // 8-level admin hierarchy drill-down
   hierarchyTree: (parentId) =>
     api.get('/gis/hierarchy/tree', { params: parentId ? { parent_id: parentId } : {} }),

@@ -457,6 +457,70 @@ def hierarchy_boundaries(_: User = Depends(get_current_user)) -> Dict[str, Any]:
     return hierarchy_svc.get_boundaries_geojson()
 
 
+@router.get("/meter-consumption")
+def meter_consumption(
+    hours: int = Query(default=24, ge=1, le=168),
+    bbox: Optional[str] = Query(default=None, description="minlon,minlat,maxlon,maxlat"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Per-meter consumption aggregate for the GIS consumption-quartile overlay.
+
+    Required by SMOC-FUNC-026-FR-03: colour meters by consumption quartile
+    (deep red for highest consumers, blue for lowest) at feeder zoom.
+
+    Returns a flat map + precomputed quartile breakpoints so the frontend can
+    colour meters without loading the full readings table.
+    """
+    bbox_parsed = parse_bbox(bbox)
+    sql = text(
+        """
+        SELECT m.serial                   AS serial,
+               COALESCE(SUM(r.energy_import_kwh), 0) AS kwh
+          FROM meters m
+     LEFT JOIN meter_readings r
+            ON r.meter_serial = m.serial
+           AND r.timestamp >= now() - (:hours || ' hours')::interval
+         WHERE (:use_bbox = FALSE OR (
+                    m.longitude BETWEEN :minlon AND :maxlon
+                AND m.latitude  BETWEEN :minlat AND :maxlat
+             ))
+         GROUP BY m.serial
+        """
+    )
+    params = {
+        "hours": hours,
+        "use_bbox": bbox_parsed is not None,
+        "minlon": bbox_parsed[0] if bbox_parsed else 0.0,
+        "minlat": bbox_parsed[1] if bbox_parsed else 0.0,
+        "maxlon": bbox_parsed[2] if bbox_parsed else 0.0,
+        "maxlat": bbox_parsed[3] if bbox_parsed else 0.0,
+    }
+    rows = db.execute(sql, params).mappings().all()
+    series = [(r["serial"], float(r["kwh"] or 0.0)) for r in rows]
+
+    # Quartile breakpoints (Q1/Q2/Q3) over non-zero consumers so inactive /
+    # offline meters don't drag the lower thresholds to zero.
+    non_zero = sorted(v for _, v in series if v > 0.0)
+    def _pct(p: float) -> float:
+        if not non_zero:
+            return 0.0
+        idx = min(len(non_zero) - 1, max(0, int(round(p * (len(non_zero) - 1)))))
+        return non_zero[idx]
+
+    return {
+        "hours": hours,
+        "quartiles": {
+            "q1": round(_pct(0.25), 2),
+            "q2": round(_pct(0.50), 2),
+            "q3": round(_pct(0.75), 2),
+            "max": round(non_zero[-1], 2) if non_zero else 0.0,
+        },
+        "meters": {serial: round(kwh, 2) for serial, kwh in series},
+        "meter_count": len(series),
+    }
+
+
 @router.post("/hierarchy/command")
 def hierarchy_command(
     payload: Dict[str, Any],
