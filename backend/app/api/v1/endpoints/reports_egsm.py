@@ -17,11 +17,110 @@ from fastapi import APIRouter, Depends, Request, Response
 from app.api.v1.endpoints._proxy_common import proxy_request
 from app.core.config import settings
 from app.core.deps import get_current_user
+from app.core.rbac import (
+    P_ENERGY_AUDIT_READ,
+    P_RELIABILITY_READ,
+    require_any_permission,
+)
 from app.models.user import User
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ── Analytics-service-backed EGSM reports ──────────────────────────────────
+# The mdms-analytics-service mounts its routes at ``/api/v1/egsm-reports/``
+# (note the dash, not ``/reports/egsm/``). Energy Audit Master and
+# Reliability Indices need to reach those specific routes with the
+# hierarchy filter and date range preserved. We expose them under
+# ``/api/v1/reports/egsm-analytics/{category}/{report}`` so the existing
+# free-form EGSM tester below is unaffected.
+
+
+@router.api_route(
+    "/egsm-analytics/{category}/{report}",
+    methods=["GET", "POST"],
+)
+async def egsm_analytics_proxy(
+    category: str,
+    report: str,
+    request: Request,
+    _: User = Depends(
+        require_any_permission(P_ENERGY_AUDIT_READ, P_RELIABILITY_READ)
+    ),
+) -> Response:
+    """Forward to the mdms-analytics-service EGSM report endpoint.
+
+    Upstream path: ``/api/v1/egsm-reports/:category/:report``.
+    Used by the Energy Audit Master and Reliability Indices UIs, which
+    need the analytics-service MV-backed output (not the legacy
+    ``/reports/egsm/…`` path proxied below).
+    """
+    return await proxy_request(
+        request,
+        base_url=settings.MDMS_BASE_URL,
+        upstream_path=f"/api/v1/egsm-reports/{category}/{report}",
+        integration_flag_name="MDMS_ENABLED",
+        integration_name="mdms",
+        api_key=settings.MDMS_API_KEY,
+        connect_timeout=settings.MDMS_CONNECT_TIMEOUT_SECONDS,
+        read_timeout=settings.MDMS_READ_TIMEOUT_SECONDS,
+    )
+
+
+@router.get("/egsm-analytics/hierarchy-data")
+async def egsm_hierarchy_data(
+    request: Request,
+    _: User = Depends(
+        require_any_permission(P_ENERGY_AUDIT_READ, P_RELIABILITY_READ)
+    ),
+) -> Response:
+    """Feeds the HierarchyFilter dropdowns (zone/circle/.../dtr).
+
+    Upstream path: ``/api/v1/hierarchy-data``.
+    """
+    return await proxy_request(
+        request,
+        base_url=settings.MDMS_BASE_URL,
+        upstream_path="/api/v1/hierarchy-data",
+        integration_flag_name="MDMS_ENABLED",
+        integration_name="mdms",
+        api_key=settings.MDMS_API_KEY,
+        connect_timeout=settings.MDMS_CONNECT_TIMEOUT_SECONDS,
+        read_timeout=settings.MDMS_READ_TIMEOUT_SECONDS,
+    )
+
+
+@router.api_route(
+    "/egsm-analytics/downloads/{path:path}",
+    methods=["GET", "POST"],
+)
+async def egsm_downloads_proxy(
+    path: str,
+    request: Request,
+    _: User = Depends(
+        require_any_permission(P_ENERGY_AUDIT_READ, P_RELIABILITY_READ)
+    ),
+) -> Response:
+    """Proxy to the mdms-analytics S3+SQS CSV download pipeline.
+
+    Upstream paths (mdms-analytics-service):
+      - ``POST /api/v1/downloads/request`` — enqueue a CSV generation job.
+      - ``GET  /api/v1/downloads/logs``    — list the caller's jobs + status.
+      - ``GET  /api/v1/downloads/:id/file`` — redirects to the S3 file.
+      - ``GET  /api/v1/downloads/configs/report-names`` — supported reports.
+    """
+    return await proxy_request(
+        request,
+        base_url=settings.MDMS_BASE_URL,
+        upstream_path=f"/api/v1/downloads/{path}",
+        integration_flag_name="MDMS_ENABLED",
+        integration_name="mdms",
+        api_key=settings.MDMS_API_KEY,
+        connect_timeout=settings.MDMS_CONNECT_TIMEOUT_SECONDS,
+        read_timeout=settings.MDMS_READ_TIMEOUT_SECONDS,
+    )
 
 
 @router.api_route(

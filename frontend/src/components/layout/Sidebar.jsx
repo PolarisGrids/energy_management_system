@@ -35,6 +35,8 @@ const NAV = [
   { label: 'Data Accuracy',     icon: ShieldCheck,      path: '/data-accuracy' },
   { label: 'Simulations',       icon: Clapperboard,     path: '/simulation' },
   { label: 'Reports',           icon: BarChart2,        path: '/reports' },
+  { label: 'Energy Audit',      icon: FileText,         path: '/reports/energy-audit' },
+  { label: 'Reliability Indices', icon: Gauge,          path: '/reports/reliability-indices' },
   { label: 'Control Room A/V',  icon: Layers,           path: '/av-control' },
   { label: 'App Builder',       icon: BotMessageSquare, path: '/app-builder' },
   { label: 'SMOC Showcase',     icon: Building2,        path: '/showcase' },

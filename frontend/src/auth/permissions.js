@@ -17,6 +17,8 @@ export const P_OUTAGE_READ = 'outage.read'
 export const P_SIMULATION_READ = 'simulation.read'
 export const P_ENERGY_READ = 'energy.read'
 export const P_REPORT_READ = 'report.read'
+export const P_ENERGY_AUDIT_READ = 'energy_audit.read'
+export const P_RELIABILITY_READ = 'reliability.read'
 export const P_NTL_READ = 'ntl.read'
 export const P_APP_BUILDER_READ = 'app_builder.read'
 export const P_AUDIT_READ = 'audit.read'
@@ -42,8 +44,8 @@ export const P_ADMIN_ALL = 'admin.all'
 const READ_SET = [
   P_DASHBOARD_READ, P_ALARM_READ, P_METER_READ, P_DER_READ, P_SENSOR_READ,
   P_HES_READ, P_MDMS_READ, P_OUTAGE_READ, P_SIMULATION_READ, P_ENERGY_READ,
-  P_REPORT_READ, P_NTL_READ, P_APP_BUILDER_READ, P_AUDIT_READ,
-  P_DATA_ACCURACY_READ, P_DASHBOARD_LAYOUT_READ,
+  P_REPORT_READ, P_ENERGY_AUDIT_READ, P_RELIABILITY_READ, P_NTL_READ,
+  P_APP_BUILDER_READ, P_AUDIT_READ, P_DATA_ACCURACY_READ, P_DASHBOARD_LAYOUT_READ,
 ]
 
 export const ROLE_PERMISSIONS = {
@@ -72,10 +74,14 @@ export const ROLE_PERMISSIONS = {
   ],
   analyst: [
     P_DASHBOARD_READ, P_ENERGY_READ, P_REPORT_READ, P_MDMS_READ, P_NTL_READ,
+    P_ENERGY_AUDIT_READ, P_RELIABILITY_READ,
     P_APP_BUILDER_READ, P_AUDIT_READ, P_DASHBOARD_LAYOUT_READ,
     P_DATA_ACCURACY_READ, P_REPORT_SCHEDULE,
   ],
-  viewer: [P_DASHBOARD_READ, P_ALARM_READ, P_REPORT_READ, P_DASHBOARD_LAYOUT_READ],
+  viewer: [
+    P_DASHBOARD_READ, P_ALARM_READ, P_REPORT_READ,
+    P_ENERGY_AUDIT_READ, P_RELIABILITY_READ, P_DASHBOARD_LAYOUT_READ,
+  ],
 }
 
 // Map frontend routes → required permission. Routes not listed here are
@@ -101,6 +107,8 @@ export const ROUTE_PERMISSIONS = {
   '/simulation/solar-overvoltage': P_SIMULATION_READ,
   '/simulation/ev-fast-charging':  P_SIMULATION_READ,
   '/reports':         P_REPORT_READ,
+  '/reports/energy-audit':        P_ENERGY_AUDIT_READ,
+  '/reports/reliability-indices': P_RELIABILITY_READ,
   '/av-control':      P_DASHBOARD_READ,
   '/app-builder':     P_APP_BUILDER_READ,
   '/showcase':        P_DASHBOARD_READ,

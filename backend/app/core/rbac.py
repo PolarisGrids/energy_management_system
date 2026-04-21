@@ -36,6 +36,8 @@ P_OUTAGE_READ = "outage.read"
 P_SIMULATION_READ = "simulation.read"
 P_ENERGY_READ = "energy.read"
 P_REPORT_READ = "report.read"
+P_ENERGY_AUDIT_READ = "energy_audit.read"
+P_RELIABILITY_READ = "reliability.read"
 P_NTL_READ = "ntl.read"
 P_APP_BUILDER_READ = "app_builder.read"
 P_AUDIT_READ = "audit.read"
@@ -63,8 +65,9 @@ P_ADMIN_ALL = "admin.all"              # super-user fallback
 _READ_PERMS: Set[str] = {
     P_DASHBOARD_READ, P_ALARM_READ, P_METER_READ, P_DER_READ, P_SENSOR_READ,
     P_HES_READ, P_MDMS_READ, P_OUTAGE_READ, P_SIMULATION_READ, P_ENERGY_READ,
-    P_REPORT_READ, P_NTL_READ, P_APP_BUILDER_READ, P_AUDIT_READ,
-    P_DATA_ACCURACY_READ, P_DASHBOARD_LAYOUT_READ,
+    P_REPORT_READ, P_ENERGY_AUDIT_READ, P_RELIABILITY_READ, P_NTL_READ,
+    P_APP_BUILDER_READ, P_AUDIT_READ, P_DATA_ACCURACY_READ,
+    P_DASHBOARD_LAYOUT_READ,
 }
 
 
@@ -98,6 +101,7 @@ ROLE_PERMISSIONS: dict[str, Set[str]] = {
     # Analyst: reports / MDMS / NTL / energy; read AppBuilder & audit.
     "analyst": {
         P_DASHBOARD_READ, P_ENERGY_READ, P_REPORT_READ, P_MDMS_READ,
+        P_ENERGY_AUDIT_READ, P_RELIABILITY_READ,
         P_NTL_READ, P_APP_BUILDER_READ, P_AUDIT_READ,
         P_DASHBOARD_LAYOUT_READ, P_DATA_ACCURACY_READ,
         P_REPORT_SCHEDULE,
@@ -105,6 +109,7 @@ ROLE_PERMISSIONS: dict[str, Set[str]] = {
     # Viewer: read-only dashboards, alarms list, reports list.
     "viewer": {
         P_DASHBOARD_READ, P_ALARM_READ, P_REPORT_READ,
+        P_ENERGY_AUDIT_READ, P_RELIABILITY_READ,
         P_DASHBOARD_LAYOUT_READ,
     },
 }
@@ -191,7 +196,8 @@ __all__ = [
     # Permission string constants
     "P_DASHBOARD_READ", "P_ALARM_READ", "P_METER_READ", "P_DER_READ",
     "P_SENSOR_READ", "P_HES_READ", "P_MDMS_READ", "P_OUTAGE_READ",
-    "P_SIMULATION_READ", "P_ENERGY_READ", "P_REPORT_READ", "P_NTL_READ",
+    "P_SIMULATION_READ", "P_ENERGY_READ", "P_REPORT_READ",
+    "P_ENERGY_AUDIT_READ", "P_RELIABILITY_READ", "P_NTL_READ",
     "P_APP_BUILDER_READ", "P_AUDIT_READ", "P_DATA_ACCURACY_READ",
     "P_DASHBOARD_LAYOUT_READ", "P_METER_COMMAND", "P_DER_COMMAND",
     "P_FOTA_MANAGE", "P_OUTAGE_FLISR", "P_OUTAGE_MANAGE", "P_ALARM_MANAGE",

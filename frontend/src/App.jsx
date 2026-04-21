@@ -8,7 +8,7 @@ import {
   P_DASHBOARD_READ, P_ALARM_READ, P_DER_READ, P_ENERGY_READ, P_SENSOR_READ,
   P_HES_READ, P_MDMS_READ, P_SIMULATION_READ, P_REPORT_READ,
   P_APP_BUILDER_READ, P_AUDIT_READ, P_OUTAGE_READ, P_NTL_READ,
-  P_DATA_ACCURACY_READ,
+  P_DATA_ACCURACY_READ, P_ENERGY_AUDIT_READ, P_RELIABILITY_READ,
 } from '@/auth/permissions'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
@@ -20,6 +20,8 @@ import EnergyMonitoring from '@/pages/EnergyMonitoring'
 import HESMirror from '@/pages/HESMirror'
 import MDMSMirror from '@/pages/MDMSMirror'
 import Reports from '@/pages/Reports'
+import EnergyAuditMaster from '@/pages/EnergyAuditMaster'
+import ReliabilityIndices from '@/pages/ReliabilityIndices'
 import AVControl from '@/pages/AVControl'
 import AppBuilder from '@/pages/AppBuilder'
 import SMOCShowcase from '@/pages/SMOCShowcase'
@@ -83,6 +85,8 @@ export default function App() {
             <Route path="simulation/solar-overvoltage"   element={guard(P_SIMULATION_READ,    <SolarOvervoltageRunner />)} />
             <Route path="simulation/ev-fast-charging"    element={guard(P_SIMULATION_READ,    <EvFastChargingRunner />)} />
             <Route path="reports"                        element={guard(P_REPORT_READ,        <Reports />)} />
+            <Route path="reports/energy-audit"           element={guard(P_ENERGY_AUDIT_READ,  <EnergyAuditMaster />)} />
+            <Route path="reports/reliability-indices"    element={guard(P_RELIABILITY_READ,   <ReliabilityIndices />)} />
             <Route path="av-control"                     element={guard(P_DASHBOARD_READ,     <AVControl />)} />
             <Route path="app-builder"                    element={guard(P_APP_BUILDER_READ,   <AppBuilder />)} />
             <Route path="showcase"                       element={guard(P_DASHBOARD_READ,     <SMOCShowcase />)} />
