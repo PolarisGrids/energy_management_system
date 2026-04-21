@@ -45,3 +45,10 @@ from app.models.app_builder import (
 from app.models.dashboard_layout import DashboardLayout
 # Spec 018 W4.T14 — Data Accuracy source_status cache.
 from app.models.source_status import SourceStatus
+# W5b — Energy Saving Analysis (org hierarchy + appliance + TOU tariff).
+from app.models.energy_savings import (
+    OrgUnit,
+    ApplianceCatalog,
+    ApplianceUsage,
+    TouTariff,
+)
