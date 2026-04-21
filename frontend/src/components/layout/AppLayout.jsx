@@ -14,7 +14,7 @@ const TITLES = {
   '/energy':       'Energy Monitoring',
   '/hes':          'HES Mirror Panel',
   '/mdms':         'MDMS Mirror Panel',
-  '/simulation':   'DER Simulations',
+  '/simulation':   'Simulations',
   '/reports':      'Reports & Audit',
   '/reports/energy-audit':        'Energy Audit Master',
   '/reports/reliability-indices': 'Reliability Indices',
@@ -40,7 +40,7 @@ export default function AppLayout() {
   })
 
   const activeAlarms = summary?.active_alarms ?? liveAlarms.length
-  const title = TITLES[pathname] || 'SMOC EMS'
+  const title = TITLES[pathname] || 'Avdhaan EMS'
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0A0F1E]">

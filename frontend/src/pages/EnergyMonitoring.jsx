@@ -566,42 +566,6 @@ function DataMonitoringTab({ meterRows, loading, error, onRetry }) {
         </div>
       </div>
 
-      {/* Data accuracy chain */}
-      <div className="glass-card p-5">
-        <div className="text-white/60 font-bold mb-4" style={{ fontSize: 12 }}>METER INFORMATION ACCURACY — HES → MDMS → CC&B CHAIN</div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            { system: 'HES',  label: 'Head-End System',     accuracy: '99.1%', status: 'ok',  detail: 'AMI data collection layer' },
-            { system: 'MDMS', label: 'Meter Data Mgmt',     accuracy: '98.6%', status: 'ok',  detail: 'VEE processing + storage'  },
-            { system: 'CC&B', label: 'Customer Care Billing', accuracy: '97.2%', status: 'ok', detail: 'Billing & CIS integration'  },
-          ].map(({ system, label, accuracy, status, detail }) => (
-            <div key={system} className="glass-card p-4 flex items-start gap-3"
-              style={{ border: '1px solid rgba(2,201,168,0.2)', background: 'rgba(2,201,168,0.04)' }}>
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: 'rgba(2,201,168,0.15)' }}>
-                <CheckCircle size={16} style={{ color: '#02C9A8' }} />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-bold" style={{ fontSize: 15 }}>{system}</span>
-                  <span className="badge-ok">{status}</span>
-                </div>
-                <div className="text-white/50 mt-0.5" style={{ fontSize: 11 }}>{label}</div>
-                <div style={{ color: '#02C9A8', fontWeight: 800, fontSize: 20, marginTop: 4 }}>{accuracy}</div>
-                <div className="text-white/30" style={{ fontSize: 10, marginTop: 2 }}>{detail}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 p-3 rounded-lg flex items-center gap-3"
-          style={{ background: 'rgba(2,201,168,0.06)', border: '1px solid rgba(2,201,168,0.15)' }}>
-          <CheckCircle size={15} style={{ color: '#02C9A8' }} />
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
-            <strong style={{ color: '#02C9A8' }}>98.2% accuracy</strong> across the full HES → MDMS → CC&B data chain — exceeds Eskom tender REQ-14 threshold.
-          </span>
-        </div>
-      </div>
-
       {/* Meter collection table */}
       <div>
         <div className="flex items-center justify-between mb-4">

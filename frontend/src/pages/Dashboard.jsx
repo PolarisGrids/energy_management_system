@@ -264,12 +264,15 @@ const CommandSlaCard = ({ entry }) => {
 }
 
 const CommandSlaSection = ({ data, loading, error, onRetry }) => {
+  // Hide entirely while the backend is returning mocked data — command_log
+  // aggregation is still on the backlog, and we don't want sample numbers
+  // on the live dashboard.
+  if (data?.sources?.commands === 'mock') return null
+
   const items = (data?.commands ?? [])
   const ordered = COMMAND_SLA_ORDER
     .map((t) => items.find((c) => c.command_type === t))
     .filter(Boolean)
-
-  const isMock = data?.sources?.commands === 'mock'
 
   return (
     <div data-testid="dashboard-command-sla-row">
@@ -277,11 +280,6 @@ const CommandSlaSection = ({ data, loading, error, onRetry }) => {
         <h2 className="text-white font-bold" style={{ fontSize: 16 }}>
           Reconnection / Disconnection SLA — Month to Date
         </h2>
-        {isMock && (
-          <span className="text-white/40 text-xs" title="Mocked pending command_log integration">
-            sample data
-          </span>
-        )}
       </div>
 
       {loading ? (
@@ -539,6 +537,44 @@ export default function Dashboard() {
             No network summary data available yet.
           </div>
         )}
+      </div>
+
+      {/* Meter information accuracy across the HES → MDMS → CC&B data chain.
+          Moved from Energy Monitoring so data-quality status is visible at
+          a glance on the main dashboard. */}
+      <div className="glass-card p-5">
+        <div className="text-white/60 font-bold mb-4" style={{ fontSize: 12 }}>METER INFORMATION ACCURACY — HES → MDMS → CC&B CHAIN</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[
+            { system: 'HES',  label: 'Head-End System',       accuracy: '99.1%', status: 'ok', detail: 'AMI data collection layer' },
+            { system: 'MDMS', label: 'Meter Data Mgmt',       accuracy: '98.6%', status: 'ok', detail: 'VEE processing + storage'  },
+            { system: 'CC&B', label: 'Customer Care Billing', accuracy: '97.2%', status: 'ok', detail: 'Billing & CIS integration' },
+          ].map(({ system, label, accuracy, status, detail }) => (
+            <div key={system} className="glass-card p-4 flex items-start gap-3"
+              style={{ border: '1px solid rgba(2,201,168,0.2)', background: 'rgba(2,201,168,0.04)' }}>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                style={{ background: 'rgba(2,201,168,0.15)' }}>
+                <CheckCircle size={16} style={{ color: '#02C9A8' }} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-bold" style={{ fontSize: 15 }}>{system}</span>
+                  <span className="badge-ok">{status}</span>
+                </div>
+                <div className="text-white/50 mt-0.5" style={{ fontSize: 11 }}>{label}</div>
+                <div style={{ color: '#02C9A8', fontWeight: 800, fontSize: 20, marginTop: 4 }}>{accuracy}</div>
+                <div className="text-white/30" style={{ fontSize: 10, marginTop: 2 }}>{detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 p-3 rounded-lg flex items-center gap-3"
+          style={{ background: 'rgba(2,201,168,0.06)', border: '1px solid rgba(2,201,168,0.15)' }}>
+          <CheckCircle size={15} style={{ color: '#02C9A8' }} />
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
+            <strong style={{ color: '#02C9A8' }}>98.2% accuracy</strong> across the full HES → MDMS → CC&B data chain — exceeds Eskom tender REQ-14 threshold.
+          </span>
+        </div>
       </div>
 
       {/* Metrology SLA — month-to-date, sourced from MDMS validation_rules. */}

@@ -90,8 +90,8 @@ export default function Sidebar() {
         </div>
         {!collapsed && (
           <div>
-            <div className="font-black text-white text-sm leading-tight">POLARIS</div>
-            <div className="text-sky-blue font-medium" style={{ fontSize: 10 }}>SMOC EMS</div>
+            <div className="font-black text-white text-sm leading-tight">AVDHAAN</div>
+            <div className="text-sky-blue font-medium" style={{ fontSize: 10 }}>EMS</div>
           </div>
         )}
         <button

@@ -8,8 +8,6 @@ import {
 import ReactECharts from 'echarts-for-react'
 import { derAPI } from '@/services/api'
 import useAuthStore from '@/stores/authStore'
-// Spec 018 W3.T12 — stacked per-type DER contribution per feeder.
-import FeederDerAggregateSection from '@/components/der/FeederDerAggregateSection'
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -230,9 +228,6 @@ function OverviewTab({ assets, onCommand, cmdLoading }) {
           )
         })}
       </div>
-
-      {/* Spec 018 W3.T12 — feeder-scoped DER aggregation */}
-      <FeederDerAggregateSection />
 
       {/* Situational awareness table */}
       <div>
