@@ -147,6 +147,11 @@ class Settings(BaseSettings):
     # rather than 500. Example:
     #   postgresql+psycopg2://postgres:***@mdms.dev.polagram.in:5432/validation_rules
     MDMS_VALIDATION_DB_URL: Optional[str] = None
+    # Read-only DSN for the MDMS `gp_hes` postgres. Source for meter push
+    # events / alarms (`mdm_pushevent`). When unset the alarm feed falls back
+    # to empty rather than 500. Example:
+    #   postgresql+psycopg2://postgres:***@mdms.dev.polagram.in:5432/gp_hes
+    MDMS_HES_DB_URL: Optional[str] = None
     MDMS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     MDMS_READ_TIMEOUT_SECONDS: float = 10.0
     MDMS_MAX_RETRIES: int = 3

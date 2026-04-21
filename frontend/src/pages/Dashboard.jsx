@@ -6,8 +6,7 @@ import {
   FileText, CalendarDays, Clock,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
-import { derAPI, energyAPI, dashboardsAPI, slaAPI } from '@/services/api'
-import { useSSOTDashboard } from '@/hooks/useSSOTDashboard'
+import { derAPI, dashboardsAPI, slaAPI, mdmsDashboardAPI } from '@/services/api'
 import { UpstreamErrorPanel } from '@/components/ui'
 import LayoutManager from '@/components/dashboard/LayoutManager'
 
@@ -238,23 +237,28 @@ export default function Dashboard() {
     reloadLayouts()
   }, [])
 
-  // Spec 018 W1.T9: KPIs sourced from the SSOT proxy. No legacy fallback.
-  const { kpis, errors: ssotErrors, loading: summaryLoading, refetch, lastRefresh } = useSSOTDashboard()
-  // Build the "summary" shape the rest of the page already expects, directly
-  // from proxy-fetched values. When any field is null (upstream down) we keep
-  // the field null so MetricCard renders "—" rather than a hardcoded fallback.
-  const s = kpis?.total_meters == null && kpis?.online_meters == null ? null : kpis
-  const hasAnyKpi = s != null
-  const summaryError = ssotErrors.hes || ssotErrors.mdms || null
+  // KPI row / load profile / alarm feed all come from MDMS via
+  // /api/v1/mdms-dashboard/*. DER asset panel below continues to read from
+  // the local EMS database.
+  const [summary, setSummary] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [summaryError, setSummaryError] = useState(null)
+  const [lastRefresh, setLastRefresh] = useState(null)
   const [derAssets, setDerAssets] = useState([])
   const [derLoading, setDerLoading] = useState(true)
   const [derError, setDerError] = useState(null)
   const [energyData, setEnergyData] = useState([])
   const [energyLoading, setEnergyLoading] = useState(true)
   const [energyError, setEnergyError] = useState(null)
+  const [mdmsAlarms, setMdmsAlarms] = useState([])
+  const [alarmsLoading, setAlarmsLoading] = useState(true)
+  const [alarmsError, setAlarmsError] = useState(null)
   const [sla, setSla] = useState(null)
   const [slaLoading, setSlaLoading] = useState(true)
   const [slaError, setSlaError] = useState(null)
+
+  const s = summary
+  const hasAnyKpi = s != null
 
   const loadDER = () => {
     setDerLoading(true)
@@ -274,30 +278,58 @@ export default function Dashboard() {
       .finally(() => setSlaLoading(false))
   }
 
+  const loadSummary = () => {
+    setSummaryLoading(true)
+    setSummaryError(null)
+    mdmsDashboardAPI.summary(24)
+      .then(({ data }) => {
+        setSummary(data)
+        setLastRefresh(new Date().toISOString())
+      })
+      .catch((err) => setSummaryError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .finally(() => setSummaryLoading(false))
+  }
+
   const loadEnergy = () => {
     setEnergyLoading(true)
     setEnergyError(null)
-    energyAPI.loadProfile({ hours: 24 })
-      .then((res) => {
-        const hours = res.data.hours || []
-        const total = res.data.total || []
-        setEnergyData(hours.map((time, i) => ({ time, load: total[i] ?? 0 })))
+    mdmsDashboardAPI.loadProfile(24)
+      .then(({ data }) => {
+        const pts = data?.points || []
+        setEnergyData(
+          pts.map((p) => ({
+            time: new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            load: p.total_kw ?? 0,
+          }))
+        )
       })
       .catch((err) => setEnergyError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
       .finally(() => setEnergyLoading(false))
   }
 
+  const loadMdmsAlarms = () => {
+    setAlarmsLoading(true)
+    setAlarmsError(null)
+    mdmsDashboardAPI.alarms({ hours: 720, limit: 25 })
+      .then(({ data }) => setMdmsAlarms(data?.items || []))
+      .catch((err) => setAlarmsError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .finally(() => setAlarmsLoading(false))
+  }
+
   useEffect(() => {
+    loadSummary()
     loadDER()
     loadEnergy()
     loadSla()
+    loadMdmsAlarms()
   }, [])
 
   const handleRetry = () => {
-    refetch?.()
+    loadSummary()
     loadDER()
     loadEnergy()
     loadSla()
+    loadMdmsAlarms()
   }
 
   const pvAsset = derAssets.find((a) => a.asset_type === 'pv')
@@ -363,16 +395,12 @@ export default function Dashboard() {
         onLayoutChanged={reloadLayouts}
       />
 
-      {/* SSOT upstream banners — shown when proxy returns error but the UI should keep rendering */}
-      {ssotErrors.hes && hasAnyKpi && (
-        <UpstreamErrorPanel upstream="hes" detail={ssotErrors.hes}
+      {/* MDMS upstream banner — warn without blanking the page when /summary 500s */}
+      {summaryError && hasAnyKpi && (
+        <UpstreamErrorPanel upstream="mdms" detail={summaryError}
           lastRefresh={lastRefresh} onRetry={handleRetry} />
       )}
-      {ssotErrors.mdms && hasAnyKpi && (
-        <UpstreamErrorPanel upstream="mdms" detail={ssotErrors.mdms}
-          lastRefresh={lastRefresh} onRetry={handleRetry} />
-      )}
-      {/* Top-level error — shown when every KPI source failed */}
+      {/* Top-level error — shown when /summary failed and we have nothing to render */}
       {topLevelError && (
         <ErrorBanner message={summaryError} onRetry={handleRetry} />
       )}
@@ -580,30 +608,71 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Live alarm feed */}
-      {liveAlarms?.length > 0 && (
-        <div>
-          <h2 className="text-white font-bold mb-3" style={{ fontSize: 16 }}>Live Alarm Feed</h2>
+      {/* Alarm feed — sourced from MDMS gp_hes.mdm_pushevent. Falls back to the
+          SSE-driven liveAlarms stream if the MDMS feed is empty. */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-white font-bold" style={{ fontSize: 16 }}>Alarm Feed</h2>
+          <span className="text-white/40 text-xs">
+            {alarmsLoading ? 'loading…' : `${mdmsAlarms.length} events from MDMS`}
+          </span>
+        </div>
+        {alarmsLoading ? (
+          <Skeleton style={{ height: 120, borderRadius: 12 }} />
+        ) : alarmsError ? (
+          <ErrorBanner message={`Alarms: ${alarmsError}`} onRetry={loadMdmsAlarms} />
+        ) : mdmsAlarms.length === 0 ? (
+          liveAlarms?.length > 0 ? (
+            <div className="glass-card overflow-hidden">
+              <table className="data-table">
+                <thead>
+                  <tr><th>Severity</th><th>Type</th><th>Meter</th><th>Description</th><th>Time</th></tr>
+                </thead>
+                <tbody>
+                  {liveAlarms.slice(0, 10).map((a, i) => (
+                    <tr key={i}>
+                      <td><span className={`badge-${a.severity}`}>{a.severity}</span></td>
+                      <td className="text-accent-blue">{a.alarm_type?.replace(/_/g, ' ')}</td>
+                      <td className="text-white/60 font-mono text-xs">{a.meter_serial ?? '—'}</td>
+                      <td className="text-white/80">{a.title}</td>
+                      <td className="text-white/40 text-xs">{new Date(a.triggered_at).toLocaleTimeString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="glass-card p-6 text-center text-white/50">
+              No alarms reported in the last 30 days.
+            </div>
+          )
+        ) : (
           <div className="glass-card overflow-hidden">
             <table className="data-table">
               <thead>
-                <tr><th>Severity</th><th>Type</th><th>Meter</th><th>Description</th><th>Time</th></tr>
+                <tr><th>Severity</th><th>Meter</th><th>Events</th><th>Time</th></tr>
               </thead>
               <tbody>
-                {liveAlarms.slice(0, 10).map((a, i) => (
+                {mdmsAlarms.slice(0, 15).map((a, i) => (
                   <tr key={i}>
-                    <td><span className={`badge-${a.severity}`}>{a.severity}</span></td>
-                    <td className="text-accent-blue">{a.alarm_type?.replace(/_/g, ' ')}</td>
-                    <td className="text-white/60 font-mono text-xs">{a.meter_serial ?? '—'}</td>
-                    <td className="text-white/80">{a.title}</td>
-                    <td className="text-white/40 text-xs">{new Date(a.triggered_at).toLocaleTimeString()}</td>
+                    <td>
+                      <span className={a.is_tamper ? 'badge-critical' : 'badge-medium'}>
+                        {a.is_tamper ? 'tamper' : 'info'}
+                      </span>
+                    </td>
+                    <td className="text-white/60 font-mono text-xs">{a.meter_id || '—'}</td>
+                    <td className="text-white/80 text-xs">
+                      {(a.messages || []).slice(0, 2).join(' · ')}
+                      {a.messages?.length > 2 && <span className="text-white/40"> +{a.messages.length - 2} more</span>}
+                    </td>
+                    <td className="text-white/40 text-xs">{new Date(a.triggered_at).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

@@ -389,6 +389,13 @@ export const slaAPI = {
   kpis: () => api.get('/sla/kpis'),
 }
 
+// ─── MDMS-sourced dashboard widgets (meter counts / comm / alarms / load) ──
+export const mdmsDashboardAPI = {
+  summary: (hours = 24) => api.get('/mdms-dashboard/summary', { params: { hours } }),
+  loadProfile: (hours = 24) => api.get('/mdms-dashboard/load-profile', { params: { hours } }),
+  alarms: (params = {}) => api.get('/mdms-dashboard/alarms', { params }),
+}
+
 // ─── Theft Analysis (2026-04-21) — MDMS-sourced NTL scoring per meter ──
 // Rankings, drill-downs, detector breakdown, manual recompute.
 export const theftAPI = {
