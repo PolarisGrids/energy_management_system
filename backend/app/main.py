@@ -117,6 +117,20 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # pragma: no cover
             log.error("failed to start reverse-flow detector: %s", exc)
 
+    # DER realtime simulator — back-fills history then ticks every 5 min.
+    der_sim_task: "asyncio.Task | None" = None
+    der_sim_stop = asyncio.Event()
+    if os.getenv("DER_SIM_ENABLED", "1") != "0":
+        try:
+            from app.services.der_sim import run_sim_loop
+
+            der_sim_task = asyncio.create_task(
+                run_sim_loop(der_sim_stop), name="der-sim"
+            )
+            log.info("der_sim started")
+        except Exception as exc:  # pragma: no cover
+            log.error("failed to start der_sim: %s", exc)
+
     try:
         yield
     finally:
@@ -132,6 +146,7 @@ async def lifespan(app: FastAPI):
             (correlator_task, correlator_stop, "outage-correlator"),
             (reliability_task, reliability_stop, "reliability-refresh"),
             (source_status_task, source_status_stop, "source-status-refresher"),
+            (der_sim_task, der_sim_stop, "der-sim"),
         ):
             if task is None:
                 continue
