@@ -21,6 +21,8 @@ from app.core.config import settings
 from app.models.notifications import NotificationChannel
 
 from .log_only_sender import LogOnlySender
+from .mock_email_sender import MockEmailSender
+from .mock_sms_sender import MockSMSSender
 from .ses_sender import SESSender
 from .twilio_sender import TwilioSender
 from .teams_sender import TeamsSender
@@ -32,9 +34,10 @@ _senders: Dict[str, object] = {}
 def get_sender(channel: str | NotificationChannel):
     """Return a process-singleton sender for the requested channel.
 
-    If the channel is not enabled (flag OFF in settings), returns a
-    `LogOnlySender` so the caller can still record a delivery row with
-    ``meta.channel_disabled=true``.
+    If the channel is not enabled (flag OFF in settings), returns
+    `MockEmailSender` / `MockSMSSender` for email/sms, or `LogOnlySender`
+    for other channels. Delivery rows record ``provider=mock-email`` /
+    ``provider=mock-sms`` so the audit log stays meaningful in dev/demo.
     """
     if isinstance(channel, NotificationChannel):
         channel = channel.value
@@ -50,7 +53,12 @@ def get_sender(channel: str | NotificationChannel):
     }.get(channel, False)
 
     if not enabled:
-        sender = LogOnlySender(channel=channel)
+        if channel == "email":
+            sender = MockEmailSender()
+        elif channel == "sms":
+            sender = MockSMSSender()
+        else:
+            sender = LogOnlySender(channel=channel)
     elif channel == "email":
         sender = SESSender()
     elif channel == "sms":
