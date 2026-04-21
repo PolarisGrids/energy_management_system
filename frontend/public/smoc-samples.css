@@ -131,7 +131,9 @@
   border-radius: var(--radius-lg);
   padding: 10px 12px;
   min-width: 0;
-  overflow: hidden;
+  /* Don't clip — parent page handles vertical scroll. Horizontal scroll
+     on wide tables/SVGs is handled by their own wrapper. */
+  overflow: visible;
 }
 .smoc-sim .panel > table,
 .smoc-sim .panel > div > table {

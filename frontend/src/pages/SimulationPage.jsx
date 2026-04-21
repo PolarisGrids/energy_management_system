@@ -129,8 +129,9 @@ export default function SimulationPage() {
         ))}
       </div>
 
-      {/* Main panel */}
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+      {/* Main panel — overflow-y-auto so the sample-design sim viz (which is
+          taller than the viewport) scrolls cleanly. */}
+      <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden min-h-0">
         {active ? (
           <>
             {/* Scenario header */}
