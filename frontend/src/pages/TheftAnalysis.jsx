@@ -66,6 +66,8 @@ const DETECTOR_LABEL = {
   phase_imbalance:      'Phase imbalance',
   md_collapse:          'MD collapse',
   load_factor_collapse: 'Load-factor collapse',
+  partial_bypass:       'Partial bypass (30–60% drop)',
+  full_bypass:          'Full bypass (>70% drop, meter online)',
 }
 
 function ScorePill({ score, tier }) {

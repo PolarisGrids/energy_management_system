@@ -81,6 +81,11 @@ DETECTOR_WEIGHTS: Dict[str, float] = {
     "phase_imbalance":        15.0,
     "md_collapse":            10.0,
     "load_factor_collapse":   10.0,
+    # Explicit bypass pattern detectors (SMOC theft enhancement):
+    #   partial_bypass — 30–60% sustained kWh drop with continued activity
+    #   full_bypass    — ≥70% drop while meter remains online/ping-alive
+    "partial_bypass":         20.0,
+    "full_bypass":            25.0,
 }
 
 
@@ -568,6 +573,120 @@ def detect_load_factor_collapse(s: MeterSignals) -> DetectorResult:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# 11. Partial bypass — sustained 30–60% kWh drop vs 14-day baseline with
+#     the meter still reporting activity. Distinguishes from `sudden_drop`
+#     (which requires >75% drop) by catching the subtler "shunt around part
+#     of the load" pattern that's invisible to single-threshold detectors.
+# ──────────────────────────────────────────────────────────────────────
+PARTIAL_BYPASS_DROP_MIN = 0.30
+PARTIAL_BYPASS_DROP_MAX = 0.60
+
+
+def detect_partial_bypass(s: MeterSignals) -> DetectorResult:
+    recent_start = s.now - timedelta(days=3)
+    prior_start = s.now - timedelta(days=14)
+    recent = _clean([r.import_wh for r in _slice_hh(s.hh, after=recent_start)])
+    prior = _clean([r.import_wh for r in _slice_hh(s.hh, after=prior_start, before=recent_start)])
+    if len(recent) < 20 or len(prior) < 60:
+        return DetectorResult(
+            "partial_bypass", "Partial bypass (sustained 30–60% kWh drop)",
+            fired=False, score=0.0, weight=DETECTOR_WEIGHTS["partial_bypass"],
+            evidence={"reason": "insufficient_history"},
+        )
+    recent_mu = _mean(recent) or 0.0
+    prior_mu = _mean(prior) or 0.0
+    if prior_mu <= 0:
+        return DetectorResult(
+            "partial_bypass", "Partial bypass (sustained 30–60% kWh drop)",
+            fired=False, score=0.0, weight=DETECTOR_WEIGHTS["partial_bypass"],
+            evidence={"reason": "prior_window_zero"},
+        )
+    drop = 1.0 - (recent_mu / prior_mu)
+    # Still-active guard: the meter must be reporting a non-trivial stream
+    # (recent mean > 10% of prior) — otherwise this is a full-bypass / vacancy
+    # pattern, not a partial shunt.
+    still_active = recent_mu > prior_mu * 0.10
+    fired = PARTIAL_BYPASS_DROP_MIN <= drop <= PARTIAL_BYPASS_DROP_MAX and still_active
+    # Intensity peaks mid-band (45% drop) and fades toward the edges.
+    mid = (PARTIAL_BYPASS_DROP_MIN + PARTIAL_BYPASS_DROP_MAX) / 2.0
+    half = (PARTIAL_BYPASS_DROP_MAX - PARTIAL_BYPASS_DROP_MIN) / 2.0
+    score = max(0.0, 1.0 - abs(drop - mid) / half) if fired else 0.0
+    return DetectorResult(
+        detector_id="partial_bypass",
+        label="Partial bypass (sustained 30–60% kWh drop)",
+        fired=fired,
+        score=score,
+        weight=DETECTOR_WEIGHTS["partial_bypass"],
+        severity="high" if fired else "low",
+        evidence={
+            "recent_window_days": 3,
+            "prior_window_days": 11,
+            "recent_mean_wh_per_slot": round(recent_mu, 3),
+            "prior_mean_wh_per_slot": round(prior_mu, 3),
+            "drop_fraction": round(drop, 4),
+            "drop_band": [PARTIAL_BYPASS_DROP_MIN, PARTIAL_BYPASS_DROP_MAX],
+            "still_active": still_active,
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 12. Full bypass — ≥70% kWh drop while the meter is still online (last_seen
+#     within 48h). Distinct from `flat_line` which looks at intra-window
+#     variance; this one compares recent to prior. Critical severity.
+# ──────────────────────────────────────────────────────────────────────
+FULL_BYPASS_DROP_THRESHOLD = 0.70
+FULL_BYPASS_MIN_PRIOR_WH_PER_SLOT = 50.0  # was a live consumer, not dormant
+
+
+def detect_full_bypass(s: MeterSignals) -> DetectorResult:
+    recent_start = s.now - timedelta(days=3)
+    prior_start = s.now - timedelta(days=14)
+    recent = _clean([r.import_wh for r in _slice_hh(s.hh, after=recent_start)])
+    prior = _clean([r.import_wh for r in _slice_hh(s.hh, after=prior_start, before=recent_start)])
+    if len(recent) < 20 or len(prior) < 60:
+        return DetectorResult(
+            "full_bypass", "Full bypass (>70% kWh drop, meter still online)",
+            fired=False, score=0.0, weight=DETECTOR_WEIGHTS["full_bypass"],
+            evidence={"reason": "insufficient_history"},
+        )
+    recent_mu = _mean(recent) or 0.0
+    prior_mu = _mean(prior) or 0.0
+    if prior_mu < FULL_BYPASS_MIN_PRIOR_WH_PER_SLOT:
+        return DetectorResult(
+            "full_bypass", "Full bypass (>70% kWh drop, meter still online)",
+            fired=False, score=0.0, weight=DETECTOR_WEIGHTS["full_bypass"],
+            evidence={"reason": "prior_too_low", "prior_mean_wh": round(prior_mu, 3)},
+        )
+    drop = 1.0 - (recent_mu / prior_mu)
+    # The "still online" guard leans on the fact that HH readings are arriving
+    # at all — if the HH stream dried up, flat_line / comm_health handle it.
+    # We require at least one reading in the last 24h.
+    last_ts = max((r.ts for r in s.hh if r.ts is not None), default=None)
+    meter_online = last_ts is not None and (s.now - last_ts) < timedelta(hours=24)
+    fired = drop >= FULL_BYPASS_DROP_THRESHOLD and meter_online
+    score = max(0.0, (drop - FULL_BYPASS_DROP_THRESHOLD) / (1.0 - FULL_BYPASS_DROP_THRESHOLD)) if fired else 0.0
+    return DetectorResult(
+        detector_id="full_bypass",
+        label="Full bypass (>70% kWh drop, meter still online)",
+        fired=fired,
+        score=min(1.0, score),
+        weight=DETECTOR_WEIGHTS["full_bypass"],
+        severity="critical" if fired else "low",
+        evidence={
+            "recent_window_days": 3,
+            "prior_window_days": 11,
+            "recent_mean_wh_per_slot": round(recent_mu, 3),
+            "prior_mean_wh_per_slot": round(prior_mu, 3),
+            "drop_fraction": round(drop, 4),
+            "drop_threshold": FULL_BYPASS_DROP_THRESHOLD,
+            "meter_online": meter_online,
+            "last_reading_ts": last_ts.isoformat() if last_ts else None,
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Registry
 # ──────────────────────────────────────────────────────────────────────
 
@@ -584,6 +703,8 @@ ALL_DETECTORS: List[Detector] = [
     detect_phase_imbalance,
     detect_md_collapse,
     detect_load_factor_collapse,
+    detect_partial_bypass,
+    detect_full_bypass,
 ]
 
 
