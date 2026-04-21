@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 
 TICK_SECONDS = 300          # 5-minute interval
 HISTORY_DAYS = 30
+METROLOGY_DAYS = 90         # rolling billing-grade daily rollup window
 SAST_OFFSET_H = 2
 SUNRISE_H = 6.0
 SUNSET_H = 18.0
@@ -324,6 +325,147 @@ def _ensure_inverters_for_pv(db: Session) -> int:
     return len(rows)
 
 
+def _rollup_metrology_daily(db: Session, days: int = 90) -> int:
+    """Compute billing-grade daily metrology rollups from der_telemetry.
+
+    One row per (asset_id, date) covering the last `days` days. The fields
+    derived per asset type are:
+
+    * PV:  kwh_generated from Σ(positive active_power_kw × Δt),
+           kwh_exported ≈ 65% of generated, self_consumed = remainder,
+           peak_output_kw = MAX(active_power_kw),
+           achievement_pct = kwh_generated / (capacity_kw × 6.5h_effective) × 100.
+    * BESS: kwh_exported from Σ(positive active_power_kw × Δt) (discharge),
+            kwh_imported from Σ(-active_power_kw × Δt) for negative (charge).
+    * EV:  kwh_imported from Σ(active_power_kw × Δt).
+
+    Δt is derived from the actual sampling interval (TICK_SECONDS / 3600 h).
+    Uses INSERT ... ON CONFLICT ... DO UPDATE so repeated calls refresh
+    rollups for in-progress days without duplicating rows.
+    """
+    now = _aligned_now()
+    start = (now - timedelta(days=days)).date()
+    dt_h = TICK_SECONDS / 3600.0
+
+    # One SQL statement per asset type so we can materialise the right
+    # columns from the same aggregate cube without branching per row.
+    # PV ─────────────────────────────────────────────────────────────────
+    pv_sql = text("""
+        INSERT INTO der_metrology_daily AS d
+            (asset_id, date, kwh_generated, kwh_exported, kwh_imported,
+             kwh_self_consumed, peak_output_kw, equivalent_hours,
+             achievement_pct, reading_count, estimated_count, source)
+        SELECT t.asset_id,
+               (t.ts AT TIME ZONE 'UTC')::date AS d,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h, 4) AS gen,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h * 0.65, 4) AS exp,
+               0 AS imp,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h * 0.35, 4) AS self_c,
+               ROUND(MAX(t.active_power_kw), 3) AS peak,
+               ROUND((SUM(GREATEST(t.active_power_kw, 0)) * :dt_h)
+                     / NULLIF(a.capacity_kw, 0), 3) AS eq_h,
+               LEAST(105,
+                 ROUND(((SUM(GREATEST(t.active_power_kw, 0)) * :dt_h)
+                        / NULLIF(a.capacity_kw * 6.5, 0)) * 100, 2)) AS ach,
+               COUNT(*) AS n_reads,
+               0 AS n_est,
+               'DER_TELEMETRY' AS source
+        FROM der_telemetry t
+        JOIN der_asset a ON a.id = t.asset_id
+        WHERE a.type = 'pv'
+          AND t.ts >= :start
+        GROUP BY t.asset_id, d, a.capacity_kw
+        ON CONFLICT (asset_id, date) DO UPDATE SET
+          kwh_generated     = EXCLUDED.kwh_generated,
+          kwh_exported      = EXCLUDED.kwh_exported,
+          kwh_imported      = EXCLUDED.kwh_imported,
+          kwh_self_consumed = EXCLUDED.kwh_self_consumed,
+          peak_output_kw    = EXCLUDED.peak_output_kw,
+          equivalent_hours  = EXCLUDED.equivalent_hours,
+          achievement_pct   = EXCLUDED.achievement_pct,
+          reading_count     = EXCLUDED.reading_count,
+          updated_at        = now()
+    """)
+
+    # BESS ───────────────────────────────────────────────────────────────
+    bess_sql = text("""
+        INSERT INTO der_metrology_daily
+            (asset_id, date, kwh_generated, kwh_exported, kwh_imported,
+             kwh_self_consumed, peak_output_kw, equivalent_hours,
+             achievement_pct, reading_count, estimated_count, source)
+        SELECT t.asset_id,
+               (t.ts AT TIME ZONE 'UTC')::date AS d,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h, 4) AS gen,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h, 4) AS exp,
+               ROUND(SUM(GREATEST(-t.active_power_kw, 0)) * :dt_h, 4) AS imp,
+               0 AS self_c,
+               ROUND(MAX(ABS(t.active_power_kw)), 3) AS peak,
+               ROUND((SUM(GREATEST(t.active_power_kw, 0)) * :dt_h)
+                     / NULLIF(a.capacity_kw, 0), 3) AS eq_h,
+               NULL AS ach,
+               COUNT(*) AS n_reads,
+               0 AS n_est,
+               'DER_TELEMETRY' AS source
+        FROM der_telemetry t
+        JOIN der_asset a ON a.id = t.asset_id
+        WHERE a.type = 'bess'
+          AND t.ts >= :start
+        GROUP BY t.asset_id, d, a.capacity_kw
+        ON CONFLICT (asset_id, date) DO UPDATE SET
+          kwh_generated     = EXCLUDED.kwh_generated,
+          kwh_exported      = EXCLUDED.kwh_exported,
+          kwh_imported      = EXCLUDED.kwh_imported,
+          kwh_self_consumed = EXCLUDED.kwh_self_consumed,
+          peak_output_kw    = EXCLUDED.peak_output_kw,
+          equivalent_hours  = EXCLUDED.equivalent_hours,
+          reading_count     = EXCLUDED.reading_count,
+          updated_at        = now()
+    """)
+
+    # EV ─────────────────────────────────────────────────────────────────
+    ev_sql = text("""
+        INSERT INTO der_metrology_daily
+            (asset_id, date, kwh_generated, kwh_exported, kwh_imported,
+             kwh_self_consumed, peak_output_kw, equivalent_hours,
+             achievement_pct, reading_count, estimated_count, source)
+        SELECT t.asset_id,
+               (t.ts AT TIME ZONE 'UTC')::date AS d,
+               0 AS gen, 0 AS exp,
+               ROUND(SUM(GREATEST(t.active_power_kw, 0)) * :dt_h, 4) AS imp,
+               0 AS self_c,
+               ROUND(MAX(t.active_power_kw), 3) AS peak,
+               ROUND((SUM(GREATEST(t.active_power_kw, 0)) * :dt_h)
+                     / NULLIF(a.capacity_kw, 0), 3) AS eq_h,
+               NULL AS ach,
+               COUNT(*) AS n_reads,
+               0 AS n_est,
+               'DER_TELEMETRY' AS source
+        FROM der_telemetry t
+        JOIN der_asset a ON a.id = t.asset_id
+        WHERE a.type = 'ev'
+          AND t.ts >= :start
+        GROUP BY t.asset_id, d, a.capacity_kw
+        ON CONFLICT (asset_id, date) DO UPDATE SET
+          kwh_imported      = EXCLUDED.kwh_imported,
+          peak_output_kw    = EXCLUDED.peak_output_kw,
+          equivalent_hours  = EXCLUDED.equivalent_hours,
+          reading_count     = EXCLUDED.reading_count,
+          updated_at        = now()
+    """)
+
+    total = 0
+    for sql in (pv_sql, bess_sql, ev_sql):
+        try:
+            res = db.execute(sql, {"dt_h": dt_h, "start": start})
+            total += res.rowcount or 0
+            db.commit()
+        except Exception as exc:
+            log.error("der_sim: metrology rollup error: %s", exc)
+            db.rollback()
+    log.info("der_sim: metrology rollup upserted ~%d rows", total)
+    return total
+
+
 def _backfill_inverter_telemetry(db: Session) -> int:
     """Back-fill per-inverter telemetry for PV inverters that have none in
     the last 2h. Derives inverter readings from the asset's existing
@@ -391,6 +533,13 @@ def backfill(db: Session) -> int:
         _backfill_inverter_telemetry(db)
     except Exception as exc:
         log.error("der_sim: inverter telemetry backfill error: %s", exc)
+        db.rollback()
+
+    # Roll up 90 days of daily metrology from existing telemetry rows.
+    try:
+        _rollup_metrology_daily(db, days=METROLOGY_DAYS)
+    except Exception as exc:
+        log.error("der_sim: metrology rollup error: %s", exc)
         db.rollback()
 
     now = _aligned_now()
@@ -548,11 +697,21 @@ async def run_sim_loop(stop: asyncio.Event) -> None:
         except asyncio.TimeoutError:
             pass
 
+    tick_count = 0
     while not stop.is_set():
         db = SessionLocal()
         try:
             n = await loop.run_in_executor(None, tick, db)
             log.debug("der_sim: tick inserted %d rows at %s", n, _aligned_now())
+            # Refresh daily metrology rollup every 12 ticks (~1 h) so the
+            # in-progress day's billing kWh stays up to date without making
+            # every 5-min tick expensive.
+            tick_count += 1
+            if tick_count % 12 == 0:
+                try:
+                    await loop.run_in_executor(None, _rollup_metrology_daily, db, 2)
+                except Exception as exc:
+                    log.error("der_sim: rollup refresh error: %s", exc)
         except Exception as exc:
             log.error("der_sim: tick error: %s", exc)
         finally:
