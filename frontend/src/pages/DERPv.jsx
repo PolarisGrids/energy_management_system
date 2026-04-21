@@ -50,6 +50,7 @@ export default function DERPv() {
   const [page, setPage] = useState(1)
 
   const [data, setData] = useState({ assets: [], aggregate: [], total_assets: 0, banner: null })
+  const [fleet, setFleet] = useState({ assets: [], aggregate: [] })
   const [trend30d, setTrend30d] = useState({ aggregate: [] })
   const [feeders, setFeeders] = useState([])
   const [types, setTypes] = useState([])
@@ -75,26 +76,34 @@ export default function DERPv() {
   }, [load30d])
 
   // ── Live page data (KPIs + selected window aggregate + paginated list) ─
+  // Two concurrent requests: paginated (for the table) and fleet-wide
+  // (for KPIs + main chart so they reflect ALL filter-matching assets,
+  // not just the visible page).
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const params = {
-        type: 'pv',
-        window,
-        limit: PAGE_SIZE,
-        offset: (page - 1) * PAGE_SIZE,
-      }
-      if (search) params.search = search
-      if (filters.type_code) params.type_code = filters.type_code
-      if (filters.feeder_id) params.feeder_id = filters.feeder_id
-      if (filters.state) params.state = filters.state
-      const { data } = await derAPI.telemetry(params)
+      const base = { type: 'pv', window }
+      if (search) base.search = search
+      if (filters.type_code) base.type_code = filters.type_code
+      if (filters.feeder_id) base.feeder_id = filters.feeder_id
+      if (filters.state) base.state = filters.state
+
+      const pageParams = { ...base, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
+      const fleetParams = { ...base, limit: 500, offset: 0 }
+      const [pageRes, fleetRes] = await Promise.all([
+        derAPI.telemetry(pageParams),
+        derAPI.telemetry(fleetParams),
+      ])
       setData({
-        assets: data.assets || [],
-        aggregate: data.aggregate || [],
-        total_assets: data.total_assets ?? 0,
-        banner: data.banner ?? null,
+        assets: pageRes.data.assets || [],
+        aggregate: pageRes.data.aggregate || [],
+        total_assets: pageRes.data.total_assets ?? 0,
+        banner: pageRes.data.banner ?? null,
+      })
+      setFleet({
+        assets: fleetRes.data.assets || [],
+        aggregate: fleetRes.data.aggregate || [],
       })
       setRefreshedAt(new Date())
     } catch (err) {
@@ -115,11 +124,10 @@ export default function DERPv() {
     setPage(1)
   }, [search, filters, window])
 
-  // ── Fleet KPIs (derived from current page; in v2 we'd have a dedicated
-  // /der/fleet/summary endpoint that aggregates server-side regardless of
-  // the visible page). ───────────────────────────────────────────────────
+  // ── Fleet KPIs (derived from the fleet-wide fetch — every filter-matching
+  // asset, not just the visible page). ───────────────────────────────────
   const kpis = useMemo(() => {
-    const assets = data.assets || []
+    const assets = fleet.assets || []
     const totalCap = assets.reduce((s, a) => s + (a.capacity_kw ?? 0), 0)
     const totalOut = assets.reduce((s, a) => s + (a.current_output_kw ?? 0), 0)
     const onlineCount = assets.filter((a) => a.inverter_online === true).length
@@ -127,16 +135,19 @@ export default function DERPv() {
     const avgAchievement = achVals.length
       ? achVals.reduce((s, v) => s + v, 0) / achVals.length
       : null
-    const aggKwh = (data.aggregate || []).reduce((s, p) => s + (p.total_kw ?? 0), 0)
-    const generationToday = aggKwh / 60 // 1-min buckets → kWh
+    // Bucket size is window-dependent (1-min for 1h/24h, 15-min for 7d,
+    // 1-hour for 30d). Convert Σkw → kWh with the right divisor.
+    const bucketsPerHour = window === '7d' ? 4 : window === '30d' ? 1 : 60
+    const aggKwh = (fleet.aggregate || []).reduce((s, p) => s + (p.total_kw ?? 0), 0)
+    const generationToday = aggKwh / bucketsPerHour
     return {
       totalOut, totalCap, onlineCount, avgAchievement,
       generationToday, totalConsumers: data.total_assets,
     }
-  }, [data])
+  }, [fleet, data.total_assets, window])
 
   // ── Charts ────────────────────────────────────────────────────────────
-  const chart24h = useMemo(() => buildBellChart(data.aggregate, '#F59E0B'), [data])
+  const chart24h = useMemo(() => buildBellChart(fleet.aggregate, '#F59E0B'), [fleet])
   const chart30d = useMemo(() => buildDailyBars(trend30d.aggregate, '#F97316'), [trend30d])
 
   // ── Filter option groups (consumer list) ──────────────────────────────

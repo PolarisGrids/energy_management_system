@@ -41,6 +41,7 @@ export default function DEREv() {
   const [page, setPage] = useState(1)
 
   const [data, setData] = useState({ assets: [], aggregate: [], total_assets: 0, banner: null })
+  const [fleet, setFleet] = useState({ assets: [], aggregate: [] })
   const [trend30d, setTrend30d] = useState({ aggregate: [] })
   const [feeders, setFeeders] = useState([])
   const [types, setTypes] = useState([])
@@ -95,21 +96,31 @@ export default function DEREv() {
   }, [])
   useEffect(() => { load30d() }, [load30d])
 
+  // Paginated (table) + fleet-wide (KPIs + chart) calls in parallel.
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const params = { type: 'ev', window, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
-      if (search) params.search = search
-      if (filters.type_code) params.type_code = filters.type_code
-      if (filters.feeder_id) params.feeder_id = filters.feeder_id
-      if (filters.state) params.state = filters.state
-      const { data: d } = await derAPI.telemetry(params)
+      const base = { type: 'ev', window }
+      if (search) base.search = search
+      if (filters.type_code) base.type_code = filters.type_code
+      if (filters.feeder_id) base.feeder_id = filters.feeder_id
+      if (filters.state) base.state = filters.state
+      const pageParams = { ...base, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }
+      const fleetParams = { ...base, limit: 500, offset: 0 }
+      const [pageRes, fleetRes] = await Promise.all([
+        derAPI.telemetry(pageParams),
+        derAPI.telemetry(fleetParams),
+      ])
       setData({
-        assets: d.assets || [],
-        aggregate: d.aggregate || [],
-        total_assets: d.total_assets ?? 0,
-        banner: d.banner ?? null,
+        assets: pageRes.data.assets || [],
+        aggregate: pageRes.data.aggregate || [],
+        total_assets: pageRes.data.total_assets ?? 0,
+        banner: pageRes.data.banner ?? null,
+      })
+      setFleet({
+        assets: fleetRes.data.assets || [],
+        aggregate: fleetRes.data.aggregate || [],
       })
       setRefreshedAt(new Date())
     } catch (err) {
@@ -127,17 +138,19 @@ export default function DEREv() {
 
   useEffect(() => { setPage(1) }, [search, filters, window])
 
+  // Fleet-wide KPIs + chart.
   const kpis = useMemo(() => {
-    const assets = data.assets || []
+    const assets = fleet.assets || []
     const totalKw = assets.reduce((s, a) => s + (a.current_output_kw ?? 0), 0)
     const totalCap = assets.reduce((s, a) => s + (a.capacity_kw ?? 0), 0)
     const activeCount = assets.filter((a) => (a.state || '').toLowerCase() === 'charging').length
-    const energyKwh = (data.aggregate || []).reduce((s, p) => s + (p.total_kw ?? 0) / 60, 0)
+    const bucketsPerHour = window === '7d' ? 4 : window === '30d' ? 1 : 60
+    const energyKwh = (fleet.aggregate || []).reduce((s, p) => s + (p.total_kw ?? 0) / bucketsPerHour, 0)
     const fees = evRate != null ? energyKwh * evRate : null
     return { totalKw, totalCap, activeCount, energyKwh, fees, totalAssets: data.total_assets }
-  }, [data, evRate])
+  }, [fleet, data.total_assets, evRate, window])
 
-  const hourlyChart = useMemo(() => buildHourlyChart(data.aggregate, evRate), [data, evRate])
+  const hourlyChart = useMemo(() => buildHourlyChart(fleet.aggregate, evRate), [fleet, evRate])
   const daily30dChart = useMemo(() => buildDaily30dChart(trend30d.aggregate, evRate), [trend30d, evRate])
 
   const filterGroups = useMemo(() => [
