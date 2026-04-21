@@ -16,6 +16,8 @@ const TITLES = {
   '/mdms':         'MDMS Mirror Panel',
   '/simulation':   'DER Simulations',
   '/reports':      'Reports & Audit',
+  '/reports/energy-audit':        'Energy Audit Master',
+  '/reports/reliability-indices': 'Reliability Indices',
   '/av-control':   'Control Room A/V',
   '/app-builder':  'App Builder',
   '/showcase':     'SMOC Showcase',
