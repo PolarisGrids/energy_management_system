@@ -30,6 +30,7 @@ import OutageDetail from '@/pages/OutageDetail'
 import NTL from '@/pages/NTL'
 // Spec 018 W3.T11 — DER native dashboards + distribution room.
 import DERPv from '@/pages/DERPv'
+import DERPvDetail from '@/pages/DERPvDetail'
 import DERBess from '@/pages/DERBess'
 import DEREv from '@/pages/DEREv'
 import DistributionRoom from '@/pages/DistributionRoom'
@@ -69,6 +70,7 @@ export default function App() {
             <Route path="alarms"                         element={guard(P_ALARM_READ,         <AlarmConsole />)} />
             <Route path="der"                            element={guard(P_DER_READ,           <DERManagement />)} />
             <Route path="der/pv"                         element={guard(P_DER_READ,           <DERPv />)} />
+            <Route path="der/pv/:assetId"                element={guard(P_DER_READ,           <DERPvDetail />)} />
             <Route path="der/bess"                       element={guard(P_DER_READ,           <DERBess />)} />
             <Route path="der/ev"                         element={guard(P_DER_READ,           <DEREv />)} />
             <Route path="distribution"                   element={guard(P_DER_READ,           <DistributionRoom />)} />

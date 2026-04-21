@@ -19,6 +19,10 @@ from app.models.meter_event import MeterEventLog, OutageCorrelatorInput
 from app.models.command_log import CommandLog
 from app.models.fota import FotaJob, FotaJobMeterStatus
 from app.models.der_ems import DERAssetEMS, DERCommandEMS
+# W5 — DER consumer / type catalog / metrology / inverter dimension.
+from app.models.der_consumer import DERConsumer, DERTypeCatalog
+from app.models.der_inverter import DERInverter, DERInverterTelemetry
+from app.models.der_metrology import DERMetrology, DERMetrologyDaily
 from app.models.sensor_reading import TransformerSensorReading
 # Spec 018 W3 — outage correlator / FLISR tables.
 from app.models.outage import OutageIncidentW3, OutageTimelineEvent, OutageFlisrAction
