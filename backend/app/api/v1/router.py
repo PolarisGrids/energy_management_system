@@ -134,3 +134,8 @@ api_router.include_router(alert_defaults_ep.router, prefix="/alert-mgmt",       
 # W5b — Energy Saving Analysis (org hierarchy + appliance shift scenarios).
 from app.api.v1.endpoints import energy_savings as energy_savings_ep  # noqa: E402
 api_router.include_router(energy_savings_ep.router, prefix="/energy-savings",    tags=["energy-savings"])
+
+# SLA KPIs (2026-04-21) — MDMS validation_rules.data_availability → month-to-date
+# SLA per metrology profile (Billing / Daily Load / Blockload) plus device counts.
+from app.api.v1.endpoints import sla as sla_ep  # noqa: E402
+api_router.include_router(sla_ep.router, prefix="/sla", tags=["sla"])

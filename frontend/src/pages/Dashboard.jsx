@@ -3,9 +3,10 @@ import { useState, useEffect } from 'react'
 import {
   Wifi, WifiOff, AlertTriangle, CheckCircle, Zap,
   Activity, MapPin, Battery, Car, RefreshCw, LayoutGrid,
+  FileText, CalendarDays, Clock,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
-import { derAPI, energyAPI, dashboardsAPI } from '@/services/api'
+import { derAPI, energyAPI, dashboardsAPI, slaAPI } from '@/services/api'
 import { useSSOTDashboard } from '@/hooks/useSSOTDashboard'
 import { UpstreamErrorPanel } from '@/components/ui'
 import LayoutManager from '@/components/dashboard/LayoutManager'
@@ -115,6 +116,100 @@ const GAUGE_OPTION = (value, label) => ({
   }],
 })
 
+// ─── SLA KPIs (month-to-date) ──────────────────────────────────────────────
+
+// Profiles surfaced on the dashboard, in display order. Everything else from
+// validation_rules.profile_types stays hidden — add here if we want more.
+const SLA_PROFILE_ORDER = ['MONTHLY_BILLING', 'DAILYLOAD', 'BLOCKLOAD']
+
+const SLA_ICON = {
+  MONTHLY_BILLING: FileText,
+  DAILYLOAD: CalendarDays,
+  BLOCKLOAD: Clock,
+}
+
+const slaColor = (pct) => {
+  if (pct == null) return '#6B7280'
+  if (pct >= 98) return '#02C9A8'
+  if (pct >= 90) return '#F59E0B'
+  return '#E94B4B'
+}
+
+const SlaCard = ({ profile, devices }) => {
+  const Icon = SLA_ICON[profile.profile_type] ?? Activity
+  const color = slaColor(profile.sla_pct)
+  const pctLabel = profile.sla_pct == null ? '—' : `${profile.sla_pct.toFixed(2)}%`
+  return (
+    <div className="metric-card">
+      <div className="flex items-start justify-between">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: `${color}20` }}
+        >
+          <Icon size={18} style={{ color }} />
+        </div>
+        <span style={{ fontSize: 11, color }}>{profile.label}</span>
+      </div>
+      <div className="mt-3">
+        <div className="text-white font-black" style={{ fontSize: 28 }}>{pctLabel}</div>
+        <div className="text-white/50 font-medium mt-0.5" style={{ fontSize: 13 }}>
+          {profile.received.toLocaleString()} / {profile.expected.toLocaleString()} records
+        </div>
+        <div style={{ color, fontSize: 11, marginTop: 4 }}>
+          {devices != null ? `${devices.toLocaleString()} meters` : 'MTD'} · {profile.invalid.toLocaleString()} invalid · {profile.estimated.toLocaleString()} est.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const SlaSection = ({ sla, loading, error, onRetry }) => {
+  const profiles = (sla?.profiles ?? [])
+  // Order by SLA_PROFILE_ORDER and drop anything not in the list.
+  const ordered = SLA_PROFILE_ORDER
+    .map((t) => profiles.find((p) => p.profile_type === t))
+    .filter(Boolean)
+
+  const meters = sla?.devices?.meters
+  const dtrs = sla?.devices?.dtrs
+  const feeders = sla?.devices?.feeders
+
+  return (
+    <div data-testid="dashboard-sla-row">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-white font-bold" style={{ fontSize: 16 }}>
+          Metrology SLA — Month to Date
+        </h2>
+        {sla && (
+          <div className="text-white/50 text-xs flex items-center gap-3">
+            <span><span className="text-white font-bold">{meters?.toLocaleString() ?? '—'}</span> meters</span>
+            <span><span className="text-white font-bold">{dtrs?.toLocaleString() ?? '—'}</span> DTRs</span>
+            <span><span className="text-white font-bold">{feeders?.toLocaleString() ?? '—'}</span> feeders</span>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonMetricCard key={i} />)}
+        </div>
+      ) : error ? (
+        <ErrorBanner message={`SLA: ${error}`} onRetry={onRetry} />
+      ) : ordered.length === 0 ? (
+        <div className="glass-card p-6 text-center text-white/50">
+          No SLA data available for this month yet.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {ordered.map((p) => (
+            <SlaCard key={p.profile_type} profile={p} devices={meters} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -157,6 +252,9 @@ export default function Dashboard() {
   const [energyData, setEnergyData] = useState([])
   const [energyLoading, setEnergyLoading] = useState(true)
   const [energyError, setEnergyError] = useState(null)
+  const [sla, setSla] = useState(null)
+  const [slaLoading, setSlaLoading] = useState(true)
+  const [slaError, setSlaError] = useState(null)
 
   const loadDER = () => {
     setDerLoading(true)
@@ -165,6 +263,15 @@ export default function Dashboard() {
       .then(({ data }) => setDerAssets(data))
       .catch((err) => setDerError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
       .finally(() => setDerLoading(false))
+  }
+
+  const loadSla = () => {
+    setSlaLoading(true)
+    setSlaError(null)
+    slaAPI.kpis()
+      .then(({ data }) => setSla(data))
+      .catch((err) => setSlaError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .finally(() => setSlaLoading(false))
   }
 
   const loadEnergy = () => {
@@ -183,12 +290,14 @@ export default function Dashboard() {
   useEffect(() => {
     loadDER()
     loadEnergy()
+    loadSla()
   }, [])
 
   const handleRetry = () => {
     refetch?.()
     loadDER()
     loadEnergy()
+    loadSla()
   }
 
   const pvAsset = derAssets.find((a) => a.asset_type === 'pv')
@@ -292,6 +401,14 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Metrology SLA — month-to-date, sourced from MDMS validation_rules. */}
+      <SlaSection
+        sla={sla}
+        loading={slaLoading}
+        error={slaError}
+        onRetry={loadSla}
+      />
 
       {/* Gauges + sparkline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

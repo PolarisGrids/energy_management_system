@@ -384,6 +384,11 @@ export const dashboardsAPI = {
   duplicate: (id) => api.post(`/dashboards/${id}/duplicate`),
 }
 
+// ─── SLA KPIs — month-to-date SLA per metrology profile (MDMS validation_rules)
+export const slaAPI = {
+  kpis: () => api.get('/sla/kpis'),
+}
+
 // ─── Data Accuracy console (spec 018 W4.T14) ──
 export const dataAccuracyAPI = {
   list: (params) => api.get('/data-accuracy', { params }),

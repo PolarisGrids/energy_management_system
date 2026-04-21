@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     # locally-tagged consumer list. Example:
     #   postgresql+psycopg2://postgres:***@mdms.dev.polagram.in:5432/db_cis
     MDMS_CIS_DB_URL: Optional[str] = None
+    # Read-only DSN for the MDMS `validation_rules` postgres. Source for SLA
+    # KPIs (Blockload / Daily Load / Billing Profile) via `data_availability`
+    # and `profile_types`. When unset the SLA endpoint returns empty metrics
+    # rather than 500. Example:
+    #   postgresql+psycopg2://postgres:***@mdms.dev.polagram.in:5432/validation_rules
+    MDMS_VALIDATION_DB_URL: Optional[str] = None
     MDMS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     MDMS_READ_TIMEOUT_SECONDS: float = 10.0
     MDMS_MAX_RETRIES: int = 3
