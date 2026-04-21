@@ -6,7 +6,7 @@
 |---|---|
 | **AWS account** | `703623468956` / `ap-south-1` |
 | **AWS CLI profile** | `dev` (`~/.aws/config`) |
-| **CodePipeline** | `dev-polaris-ems` — triggered by push to branch `eskom_dev` |
+| **CodePipeline** | `dev-polaris-ems` — triggered by push to branch `main` |
 | **EKS cluster** | `dev-cluster` |
 | **K8s namespace** | `polaris-ems` |
 | **Deployments** | `polaris-ems-backend` · `polaris-ems-frontend` |
@@ -21,8 +21,8 @@ aws --profile dev eks update-kubeconfig --name dev-cluster --region ap-south-1
 # Check pipeline
 aws --profile dev codepipeline get-pipeline-state --name dev-polaris-ems --region ap-south-1
 
-# Trigger deploy — push main → eskom_dev
-git push origin main:eskom_dev
+# Trigger deploy — push to main
+git push origin main
 
 # Rollback
 kubectl -n polaris-ems rollout undo deployment/polaris-ems-backend
@@ -36,9 +36,8 @@ docker-compose up --build        # backend :8002, frontend :3001, postgres :5432
 Credentials: `smoc / smoc_pass` · DB: `smoc_ems`
 
 ## Git branching
-- `main` — stable, source of truth for PRs
-- `eskom_dev` — pipeline trigger branch (push `main → eskom_dev` to deploy)
-- Feature branches: `feat/<name>`
+- `main` — stable, source of truth for PRs **and** the pipeline trigger branch (push to `main` deploys)
+- Feature branches: `feat/<name>` — merge into `main` to ship
 
 ## DER simulator
 `backend/app/services/der_sim.py` — asyncio background task started in `lifespan`.
