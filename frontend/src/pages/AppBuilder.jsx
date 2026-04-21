@@ -450,11 +450,26 @@ function LiveWidget({ widget, sources, compact = true }) {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', height: '100%', gap: 6,
+        justifyContent: 'center', height: '100%', gap: 6, padding: 8, textAlign: 'center',
       }}>
         <Icon size={22} style={{ color: palette.color }} />
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Click to configure</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+          {compact ? 'Click gear to bind data' : 'No data binding — re-open in Builder to configure'}
+        </span>
       </div>
+    )
+  }
+
+  // Runtime: binding exists but the source catalog hasn't come back yet —
+  // keep the widget visibly placeholderd instead of looking broken.
+  if (!source) {
+    return (
+      <WidgetFrame title={binding.title || widget.name} err={false}>
+        <div style={{ height: '100%', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>
+          Source “{binding.source_id}” unavailable
+        </div>
+      </WidgetFrame>
     )
   }
 
@@ -749,6 +764,11 @@ function DashboardBuilder({ toast }) {
     if (!saveName.trim()) {
       toast.show('Provide an app name first', 'error'); return
     }
+    const unbound = canvas.filter(w => w && !w.binding).length
+    if (unbound > 0) {
+      toast.show(`${unbound} widget(s) still have no data binding — open the gear and pick a source before saving.`, 'error')
+      return
+    }
     const widgets = canvas
       .map((w, i) => w ? {
         slot: i,
@@ -757,14 +777,30 @@ function DashboardBuilder({ toast }) {
         binding: w.binding || null,
       } : null)
       .filter(Boolean)
+    const slug = slugify(saveName)
+    const payload = {
+      name: saveName.trim(),
+      description: `Dashboard with ${widgets.length} widget(s)`,
+      definition: { widgets, grid: { rows: GRID_ROWS, cols: GRID_COLS } },
+    }
+    // Create-or-update: POST the new slug; on 409 (slug exists) fall through
+    // to PUT /apps/{slug} which bumps the version with the new definition.
+    // Previously the 2nd save silently failed with 'slug already exists',
+    // leaving the stale v1 widgets in the runtime view.
     try {
-      await appBuilderAPI.createApp({
-        slug: slugify(saveName),
-        name: saveName.trim(),
-        description: `Dashboard with ${widgets.length} widget(s)`,
-        definition: { widgets, grid: { rows: GRID_ROWS, cols: GRID_COLS } },
-      })
+      await appBuilderAPI.createApp({ slug, ...payload })
       toast.show('Saved as app', 'success')
+      setSaveName('')
+      return
+    } catch (e) {
+      if (e?.response?.status !== 409) {
+        toast.show(e?.response?.data?.detail || 'Save failed', 'error')
+        return
+      }
+    }
+    try {
+      await appBuilderAPI.updateApp(slug, payload)
+      toast.show('Updated existing app (new version)', 'success')
       setSaveName('')
     } catch (e) {
       toast.show(e?.response?.data?.detail || 'Save failed', 'error')
