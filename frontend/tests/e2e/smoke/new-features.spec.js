@@ -81,6 +81,21 @@ test.describe('New features verification (post-7de9395)', () => {
     expect(tree.commands).toBeDefined()
   })
 
+  test('Backend: /gis/layers/{layer} returns FeatureCollection (lat/lon fallback)', async ({ request, baseURL }) => {
+    const loginResp = await request.post(`${baseURL}/api/v1/auth/login`, {
+      data: { username: 'operator', password: 'Oper@2026' },
+    })
+    const { access_token } = await loginResp.json()
+    const auth = { Authorization: `Bearer ${access_token}` }
+    for (const layer of ['feeders', 'transformers', 'meters', 'der', 'alarms']) {
+      const r = await request.get(`${baseURL}/api/v1/gis/layers/${layer}?max_features=200`, { headers: auth })
+      expect(r.ok(), `${layer} should be 200`).toBeTruthy()
+      const fc = await r.json()
+      expect(fc.type, `${layer} should be a FeatureCollection`).toBe('FeatureCollection')
+      expect(Array.isArray(fc.features), `${layer} features array`).toBeTruthy()
+    }
+  })
+
   test('Backend: simulation /simulation has rich solar/ev/microgrid network_state', async ({ request, baseURL }) => {
     const loginResp = await request.post(`${baseURL}/api/v1/auth/login`, {
       data: { username: 'operator', password: 'Oper@2026' },
