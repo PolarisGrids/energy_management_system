@@ -70,17 +70,27 @@ def _meter_props(m: Meter) -> Dict[str, Any]:
 
 
 def _transformer_props(t: Transformer) -> Dict[str, Any]:
+    loading = t.loading_percent
+    if loading is None and t.capacity_kva and t.current_load_kw is not None:
+        loading = round((t.current_load_kw / t.capacity_kva) * 100.0, 1)
     return {
         "id": t.id,
         "name": t.name,
         "feeder_id": t.feeder_id,
         "capacity_kva": t.capacity_kva,
+        "current_load_kw": t.current_load_kw,
+        # Frontend GISMap reads `loading_pct`; keep `loading_percent` for legacy
+        # consumers (feeder dashboard widgets).
+        "loading_pct": loading,
         "loading_percent": t.loading_percent,
         "voltage_pu": t.voltage_pu,
     }
 
 
 def _feeder_props(f: Feeder) -> Dict[str, Any]:
+    loading_pct = None
+    if f.capacity_kva and f.current_load_kw is not None:
+        loading_pct = round((f.current_load_kw / f.capacity_kva) * 100.0, 1)
     return {
         "id": f.id,
         "name": f.name,
@@ -88,6 +98,7 @@ def _feeder_props(f: Feeder) -> Dict[str, Any]:
         "voltage_kv": f.voltage_kv,
         "capacity_kva": f.capacity_kva,
         "current_load_kw": f.current_load_kw,
+        "loading_pct": loading_pct,
     }
 
 
@@ -171,6 +182,25 @@ LAYER_CONFIG = {
     "service_lines": (ServiceLine, "geom", _service_line_props, 13),
     "poles":         (Pole, "geom", _pole_props, 15),
 }
+
+# Singular short-names accepted on the wire — both the frontend and the
+# original W3.T5 tests use `meter` / `dtr` / `feeder`. Keep them working
+# alongside the canonical plural keys.
+LAYER_ALIASES = {
+    "meter":        "meters",
+    "dtr":          "transformers",
+    "transformer":  "transformers",
+    "feeder":       "feeders",
+    "pole":         "poles",
+    "alarm":        "alarms",
+    "zone":         "zones",
+    "outage_area":  "outage_areas",
+    "service_line": "service_lines",
+}
+
+
+def _canonical_layer(layer: str) -> str:
+    return LAYER_ALIASES.get(layer, layer)
 
 
 # ── lat/lon fallback ────────────────────────────────────────────────────────
@@ -295,6 +325,7 @@ def get_layer(
     _: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return a RFC 7946 FeatureCollection for ``layer`` filtered by ``bbox`` + LOD."""
+    layer = _canonical_layer(layer)
     if layer not in LAYER_CONFIG:
         raise HTTPException(status_code=404, detail=f"Unknown layer '{layer}'")
 

@@ -149,12 +149,14 @@ export default function GISMap() {
   const [bbox, setBbox] = useState(null)
 
   // Layer visibility flags — default set reflects the US-22 "start broad" view.
+  // Outages default ON so SoC operators see active incidents the moment they
+  // open the map (control-room workflow).
   const [layers, setLayers] = useState({
     feeder: true,
     dtr: true,
     pole: false,
     meter: true,
-    outage: false,
+    outage: true,
     alarm_heat: false,
     ntl_suspects: false,
   })
@@ -197,12 +199,9 @@ export default function GISMap() {
         safeGet(() => derAPI.list()),
       ])
       if (cancelled) return
-      // Defensive: backend `/gis/layers/{layer}` is currently broken (Feeder
-      // model has no PostGIS `geom` column → 500). The frontend's
-      // `gisAPI.layer()` accidentally hits `/gis/layers` (no path) which
-      // returns the layer catalog, not a FeatureCollection — so `.features`
-      // is undefined and any downstream `.features.map()` blows up the whole
-      // page. Coerce any non-FC payload into an empty FC so the page renders.
+      // Defensive: if the backend ever returns a non-FC payload (404, 500,
+      // schema drift) coerce to an empty FC so downstream `.features.map()`
+      // can't crash the whole map.
       const asFC = (payload) =>
         payload && Array.isArray(payload.features)
           ? payload

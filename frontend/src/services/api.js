@@ -242,6 +242,21 @@ export const outagesAPI = {
   gisOverlay: (params) => api.get('/gis/outages', { params }),
 }
 
+// Map the short GIS layer aliases used across the app to the backend's
+// LAYER_CONFIG keys (see backend/app/api/v1/endpoints/gis.py). Declared
+// here so both `mdmsAPI.gisLayers` and `gisAPI.layer` can reuse it.
+const GIS_LAYER_ALIAS = {
+  feeder:      'feeders',
+  dtr:         'transformers',
+  transformer: 'transformers',
+  meter:       'meters',
+  pole:        'poles',
+  alarm:       'alarms',
+  zone:        'zones',
+  outage_area: 'outage_areas',
+  service_line:'service_lines',
+}
+
 // ─── MDMS + HES integration APIs ───────────────────────────────────────────
 // Originally these hit /api/v1/mdms/* and /api/v1/hes/* SSOT proxies, but
 // those forward to upstream HES/MDMS which use a different Cognito
@@ -283,7 +298,8 @@ export const mdmsAPI = {
   // GIS — EMS-native GeoJSON layer endpoint
   gisLayers: (bbox, layers) => {
     const layer = Array.isArray(layers) ? layers[0] : layers
-    return api.get('/gis/layers', { params: { bbox, layer } })
+    const canonical = GIS_LAYER_ALIAS[layer] || layer
+    return api.get(`/gis/layers/${canonical}`, { params: { bbox } })
   },
   // Power quality
   powerQuality: () => api.get('/mdms-mirror/power-quality'),
@@ -327,9 +343,14 @@ export const mdmsMirrorAPI = {
 // ─── GIS (spec 018 W3.T5/T6) — EMS-native layer endpoints backed by PostGIS ──
 // These hit the EMS `/gis/*` router (distinct from the MDMS proxy
 // `mdmsAPI.gisLayers` which is only used when MDMS owns the topology copy).
+// `GIS_LAYER_ALIAS` lives near the top of the file so mdmsAPI can share it.
 export const gisAPI = {
-  layer: (layer, bbox, limit = 2000) =>
-    api.get('/gis/layers', { params: { layer, bbox, limit } }),
+  layer: (layer, bbox, limit = 2000) => {
+    const canonical = GIS_LAYER_ALIAS[layer] || layer
+    return api.get(`/gis/layers/${canonical}`, {
+      params: { bbox, max_features: limit },
+    })
+  },
   heatmapAlarms: (bbox, gridDeg = 0.1) =>
     api.get('/gis/heatmap/alarms', { params: { bbox, grid_deg: gridDeg } }),
   // 8-level admin hierarchy drill-down
