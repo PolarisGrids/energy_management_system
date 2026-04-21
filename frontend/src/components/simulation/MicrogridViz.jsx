@@ -1,369 +1,363 @@
-import { Sun, Flame, Battery, Car, Zap, AlertTriangle, Activity } from 'lucide-react'
-
 /**
- * MicrogridViz — Riverside Industrial Precinct VPP/microgrid visualization for REQ-23.
- * Renders asset mix cards, reverse-flow needle gauge, PCC voltage meter, a big
- * net-export number, and an island-mode banner.
+ * MicrogridViz — faithful port of
+ * simulation_sample/peaking_microgrid_smoc_dashboard.html.
+ *
+ * 4-DER peaking microgrid with reverse-flow detection, VPP aggregation,
+ * and island-mode capability. Renders from networkState +
+ * scenario.parameters shape emitted by the simulation engine.
  */
 
-const ASSET_ICON = {
-  pv:         Sun,
-  solar:      Sun,
-  gas:        Flame,
-  gas_peaker: Flame,
-  peaker:     Flame,
-  bess:       Battery,
-  battery:    Battery,
-  ev:         Car,
-  ev_fleet:   Car,
-}
-
-const ASSET_LABEL = {
-  pv:         'Solar PV Array',
-  solar:      'Solar PV Array',
-  gas:        'Gas Peaker',
-  gas_peaker: 'Gas Peaker',
-  peaker:     'Gas Peaker',
-  bess:       'Battery Storage',
-  battery:    'Battery Storage',
-  ev:         'EV Fleet',
-  ev_fleet:   'EV Fleet',
-}
-
-const ASSET_COLOR = {
-  pv: '#F59E0B', solar: '#F59E0B',
-  gas: '#E94B4B', gas_peaker: '#E94B4B', peaker: '#E94B4B',
-  bess: '#02C9A8', battery: '#02C9A8',
-  ev: '#56CCF2', ev_fleet: '#56CCF2',
-}
-
-function valueForAsset(type, ns) {
-  if (!ns) return 0
-  switch (type) {
-    case 'pv': case 'solar':         return ns.pv_kw ?? 0
-    case 'gas': case 'gas_peaker': case 'peaker': return ns.gas_kw ?? 0
-    case 'bess': case 'battery':     return ns.bess_kw ?? 0
-    case 'ev': case 'ev_fleet':      return ns.ev_fleet_kw ?? 0
-    default: return 0
-  }
-}
-
-function voltageBandColor(puVal) {
-  if (puVal == null) return '#6B7280'
-  if (puVal >= 1.08) return '#E94B4B'
-  if (puVal >= 1.05) return '#F59E0B'
-  if (puVal >= 1.02) return '#ABC7FF'
-  return '#02C9A8'
+const ASSET_DEFAULTS = {
+  pv:         { label: 'PV array',        rated_kw: 200 },
+  gas_peaker: { label: 'Gas peaker',      rated_kw: 150 },
+  bess:       { label: 'BESS',            rated_kw: 100 },
+  ev_fleet:   { label: 'EV fleet (V2G)',  rated_kw: 120 },
 }
 
 export default function MicrogridViz({ scenario, currentStep, networkState }) {
-  const params = scenario?.parameters || {}
-  const assets = params.assets || [
-    { type: 'pv',         rated_kw: 400 },
-    { type: 'gas_peaker', rated_kw: 300 },
-    { type: 'bess',       rated_kw: 250 },
-    { type: 'ev_fleet',   rated_kw: 150 },
+  const params = scenario?.parameters ?? {}
+  const ns = networkState ?? {}
+  const assets = params.assets ?? []
+  const relayKw = params.reverse_power_relay_kw ?? -150
+  const islanded = !!ns.islanded
+  const mode = ns.aggregation_mode ?? 'individual'
+  const phase = ns.phase ?? 'startup'
+
+  const pvKw = ns.pv_kw ?? 0
+  const gasKw = ns.gas_kw ?? 0
+  const bessKw = ns.bess_kw ?? 0
+  const evKw = ns.ev_fleet_kw ?? 0
+  const totalGen = ns.total_gen_kw ?? Math.max(0, pvKw + gasKw + Math.max(0, bessKw) + Math.max(0, evKw))
+  const localLoad = ns.local_load_kw ?? 0
+  const netExport = ns.net_export_kw ?? 0
+  const reversePower = ns.reverse_power_kw ?? 0
+  const relayMargin = ns.relay_margin_kw ?? Math.max(0, Math.abs(relayKw) - reversePower)
+  const vpu = ns.v_pu_injection ?? 1.0
+  const vv = ns.v_v_injection ?? Math.round(vpu * 230 * 10) / 10
+
+  // Flow direction and severity
+  const flowSev = reversePower > 0
+    ? (relayMargin < 20 ? 'cr' : relayMargin < 40 ? 'ma' : 'in')
+    : 'ok'
+  const flowBadgeText = reversePower > 0
+    ? `← ${(-reversePower).toFixed(0)} kW (reverse)`
+    : netExport < 0
+      ? `→ ${Math.abs(netExport).toFixed(0)} kW (import)`
+      : `→ ${netExport.toFixed(0)} kW (import)`
+  const flowBadgeClass = reversePower > 0 ? 'flow-rev' : 'flow-fwd'
+  const flowBarPct = (() => {
+    if (reversePower > 0) return Math.min(100, (reversePower / Math.abs(relayKw)) * 100)
+    if (netExport < 0)    return 50 + Math.min(50, (Math.abs(netExport) / Math.abs(relayKw)) * 50)
+    return 50
+  })()
+  const flowBarColor = flowSev === 'cr' ? '#E24B4A' : flowSev === 'ma' ? '#EF9F27' : flowSev === 'in' ? '#378ADD' : '#639922'
+
+  const topStatus = islanded
+    ? { pulse: 'amber', color: '#854F0B', text: 'ISLAND MODE' }
+    : flowSev === 'cr'
+      ? { pulse: 'red', color: '#A32D2D', text: 'REVERSE POWER FLOW' }
+      : flowSev === 'ma'
+        ? { pulse: 'amber', color: '#854F0B', text: 'APPROACHING RELAY LIMIT' }
+        : { pulse: 'green', color: '#3B6D11', text: 'STABLE' }
+
+  // Resolve a DER asset by id/type — falls back to defaults if the scenario
+  // hasn't registered one.
+  const assetByType = (t) => assets.find(a => a.type === t) ?? { type: t, ...ASSET_DEFAULTS[t] }
+  const pv = assetByType('pv')
+  const gas = assetByType('gas_peaker')
+  const bess = assetByType('bess')
+  const evf = assetByType('ev_fleet')
+
+  const derCards = [
+    { key: 'pv',   asset: pv,  kw: pvKw,  color: '#185FA5', badgeClass: 'info',
+      barColor: '#378ADD', sub: `Rated ${pv.rated_kw} kW · solar PV`,
+      mode: 'Mode: max power point', badge: pvKw > 0 ? 'Exporting' : 'Idle' },
+    { key: 'gas', asset: gas, kw: gasKw, color: '#3B6D11', badgeClass: 'ok',
+      barColor: '#639922', sub: `Rated ${gas.rated_kw} kW · peaking`,
+      mode: islanded ? 'Mode: grid forming' : 'Mode: frequency support',
+      badge: gasKw > 0 ? 'Online' : 'Standby' },
+    { key: 'bess', asset: bess, kw: bessKw, color: bessKw < 0 ? '#854F0B' : '#3B6D11',
+      badgeClass: bessKw === 0 ? 'warn' : bessKw < 0 ? 'warn' : 'ok',
+      barColor: bessKw < 0 ? '#EF9F27' : '#639922',
+      sub: `Rated ±${bess.rated_kw} kW · ${bess.capacity_kwh ?? 300} kWh`,
+      mode: bessKw < 0 ? 'Mode: charging (absorb)' : bessKw > 0 ? 'Mode: discharging' : 'Mode: standby',
+      badge: bessKw < 0 ? `Charging · SoC ${ns.bess_soc_pct ?? 68}%` : bessKw > 0 ? 'Discharging' : `Idle · SoC ${ns.bess_soc_pct ?? 68}%` },
+    { key: 'ev', asset: evf, kw: evKw, color: '#26215C', badgeClass: 'purple',
+      barColor: '#7F77DD',
+      sub: `V2G ±${evf.rated_kw} kW · ${evf.vehicles ?? 8} vehicles · avg SoC ${ns.ev_fleet_soc_pct ?? 68}%`,
+      mode: evKw < 0 ? 'Mode: boosted load' : evKw > 0 ? 'Mode: discharge' : 'Mode: idle',
+      badge: `${evf.vehicles ?? 8} vehicles` },
   ]
 
-  const ns = networkState || {}
-  const islanded = !!ns.islanded
-  const aggMode = ns.aggregation_mode || 'individual'
-  const netExportKw = ns.net_export_kw ?? 0
-  const reversePowerKw = ns.reverse_power_kw ?? 0
-  const relayKw = ns.reverse_power_relay_kw ?? params.reverse_power_relay_kw ?? -150
-  const vPuInjection = ns.v_pu_injection ?? null
-  const bessSocPct = ns.bess_soc_pct ?? null
-  const evFleetSocPct = ns.ev_fleet_soc_pct ?? null
-  const evFleetCount = ns.ev_fleet_count ?? params.ev_fleet_count ?? 8
-  const pvIrradiance = ns.pv_irradiance_w_m2 ?? null
-  const gasRampStatus = ns.gas_ramp_status || 'idle'
-  const relayMarginKw = ns.relay_margin_kw ?? (reversePowerKw - relayKw)
-
-  // Gauge scale: -300..+300 kW
-  const gMin = -300
-  const gMax = 300
-  const clamp = (v) => Math.max(gMin, Math.min(gMax, v))
-  const toPct = (v) => ((clamp(v) - gMin) / (gMax - gMin)) * 100
-
-  const relayPct  = toPct(relayKw)          // e.g. -150 -> 25%
-  const amberLo   = toPct(relayKw + 20)     // amber zone ends 20 kW above relay
-  const needlePct = toPct(reversePowerKw)
-
-  // Needle zone color
-  let needleColor = '#02C9A8'
-  if (reversePowerKw <= relayKw) needleColor = '#E94B4B'
-  else if (reversePowerKw <= relayKw + 20) needleColor = '#F59E0B'
-
-  // V_pu meter geometry (vertical: bottom=1.00, top=1.10)
-  const vPuMin = 1.00
-  const vPuMax = 1.10
-  const vPuPct = vPuInjection != null
-    ? Math.max(0, Math.min(1, (vPuInjection - vPuMin) / (vPuMax - vPuMin))) * 100
-    : 0
-  const vColor = voltageBandColor(vPuInjection)
-
   return (
-    <div className="glass-card p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: 'rgba(171,199,255,0.15)' }}>
-            <Zap size={18} style={{ color: '#ABC7FF' }} />
+    <div className="smoc-sim">
+      {/* TOP BAR */}
+      <div className="topbar">
+        <div>
+          <div className="tb-title">SMOC — Peaking Microgrid · {params.microgrid_name ?? 'Riverside'}</div>
+          <div className="tb-meta">
+            {currentStep ? `Step ${currentStep}/${scenario?.total_steps ?? '?'}` : 'Awaiting start'}
+            {' · '}4-DER virtual power plant · Feeder {params.feeder_name ?? 'F7'} · GCP-01
           </div>
-          <div>
-            <div className="text-white font-black" style={{ fontSize: 15 }}>
-              Riverside Industrial Precinct
+        </div>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+            Mode: <span style={{ fontWeight: 500, color: '#185FA5' }}>{phase.replace(/_/g, ' ')}</span>
+          </div>
+          <div className="tb-status" style={{ color: topStatus.color }}>
+            <div className={`pulse ${topStatus.pulse}`} />
+            {topStatus.text}
+          </div>
+        </div>
+      </div>
+
+      {/* KPI row */}
+      <div className="g4">
+        <div className="mcard">
+          <div className="mlabel">Net feeder flow</div>
+          <div className={`mval ${reversePower > 0 ? 'danger' : 'ok'}`}>
+            {netExport < 0 ? '+' : '-'}{Math.abs(netExport).toFixed(0)}<span className="munit"> kW</span>
+          </div>
+        </div>
+        <div className="mcard">
+          <div className="mlabel">Total DER output</div>
+          <div className="mval info">{totalGen.toFixed(0)}<span className="munit"> kW</span></div>
+        </div>
+        <div className="mcard">
+          <div className="mlabel">Local load</div>
+          <div className="mval">{localLoad.toFixed(0)}<span className="munit"> kW</span></div>
+        </div>
+        <div className="mcard">
+          <div className="mlabel">Reverse flow margin</div>
+          <div className={`mval ${flowSev === 'cr' ? 'danger' : flowSev === 'ma' ? 'warn' : 'ok'}`}>
+            {relayMargin.toFixed(0)}<span className="munit"> kW</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: Feeder + DER cards + Alarms */}
+      <div className="g3">
+        {/* Feeder */}
+        <div className="panel">
+          <div className={`ptitle ${flowSev === 'cr' ? 'danger' : 'warn'}`}>Feeder {params.feeder_name ?? 'F7'} — transformer &amp; flow</div>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 3 }}>
+              <span style={{ color: 'var(--color-text-secondary)' }}>Feeder power flow</span>
+              <span
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 10, fontWeight: 500, padding: '3px 7px', borderRadius: 4,
+                  background: flowBadgeClass === 'flow-rev' ? '#FCEBEB' : '#EAF3DE',
+                  color: flowBadgeClass === 'flow-rev' ? '#791F1F' : '#27500A',
+                }}
+              >
+                {flowBadgeText}
+              </span>
             </div>
-            <div className="text-white/40" style={{ fontSize: 11 }}>
-              {params.site_name || 'VPP microgrid'} · {assets.length} DERs · PCC 11 kV
+            <div className="loadbar-wrap" style={{ height: 14 }}>
+              <div className="loadbar" style={{ width: `${flowBarPct}%`, background: flowBarColor, height: 14 }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+              <span>{relayKw} kW (trip)</span>
+              <span style={{ color: '#639922' }}>0 (neutral)</span>
+              <span>+{Math.abs(relayKw)} kW import</span>
+            </div>
+          </div>
+          <Strip label="Reverse-flow relay"   value={`armed at ${relayKw} kW`} severity="danger" />
+          <Strip label="Relay headroom"        value={`${relayMargin.toFixed(0)} kW`}
+                 severity={flowSev === 'cr' ? 'danger' : flowSev === 'ma' ? 'warn' : 'ok'} />
+          <Strip label="Injection voltage"     value={`${vv.toFixed(1)} V (${vpu.toFixed(2)} pu)`}
+                 severity={vpu >= 1.08 ? 'danger' : vpu >= 1.05 ? 'warn' : 'ok'} />
+          <Strip label="Voltage limit"         value={`${params.v_limit_v ?? 253} V (1.10 pu)`} />
+          <Strip label="Island capable"        value={islanded ? 'Islanded' : 'Grid-tied'}
+                 severity={islanded ? 'warn' : 'ok'} />
+          <Strip label="Grid connection point" value="GCP-01" />
+        </div>
+
+        {/* DER cards */}
+        <div className="panel">
+          <div className="ptitle">DER assets — individual &amp; aggregated</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+            {derCards.map(d => {
+              const ratio = Math.min(100, Math.max(0, Math.abs(d.kw) / (d.asset.rated_kw || 1) * 100))
+              return (
+                <div key={d.key}
+                     style={{
+                       background: 'var(--color-background-primary)',
+                       border: `0.5px solid ${d.kw !== 0 ? d.barColor : 'var(--color-border-tertiary)'}`,
+                       borderRadius: 8, padding: 8,
+                     }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text-primary)' }}>{d.asset.label ?? ASSET_DEFAULTS[d.key]?.label}</div>
+                    <span className={`badge ${d.badgeClass}`}>{d.badge}</span>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 500, color: d.color, marginTop: 3 }}>
+                    {d.kw >= 0 ? '' : '-'}{Math.abs(d.kw).toFixed(0)} kW
+                  </div>
+                  <div className="loadbar-wrap" style={{ height: 8 }}>
+                    <div className="loadbar" style={{ width: `${ratio}%`, background: d.barColor, height: 8 }} />
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--color-text-secondary)' }}>{d.sub}</div>
+                  <div style={{ marginTop: 3, fontSize: 9, color: 'var(--color-text-secondary)' }}>{d.mode}</div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* VPP aggregation bar */}
+          <div style={{ background: 'var(--color-background-secondary)', borderRadius: 6, padding: '8px 10px' }}>
+            <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-primary)', marginBottom: 5 }}>
+              VPP aggregate dispatch
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+              Aggregated in {mode === 'vpp' ? 'VPP mode' : 'individual control mode'} · total {totalGen.toFixed(0)} kW
+            </div>
+            <div style={{ display: 'flex', gap: 2, height: 12, borderRadius: 4, overflow: 'hidden', marginBottom: 4 }}>
+              {[
+                { w: Math.max(2, (pvKw / Math.max(totalGen, 1)) * 100), c: '#378ADD' },
+                { w: Math.max(0, (gasKw / Math.max(totalGen, 1)) * 100), c: '#639922' },
+                { w: Math.max(0, (Math.abs(bessKw) / Math.max(totalGen, 1)) * 100), c: '#EF9F27' },
+                { w: Math.max(0, (Math.abs(evKw)   / Math.max(totalGen, 1)) * 100), c: '#7F77DD' },
+              ].map((b, i) => (
+                <div key={i} style={{ width: `${b.w}%`, background: b.c, transition: 'width 1.2s' }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 10, fontSize: 9, color: 'var(--color-text-secondary)', flexWrap: 'wrap' }}>
+              <LegendChip color="#378ADD" label={`PV ${pvKw.toFixed(0)} kW`} />
+              <LegendChip color="#639922" label={`Gas ${gasKw.toFixed(0)} kW`} />
+              <LegendChip color="#EF9F27" label={`BESS ${bessKw.toFixed(0)} kW`} />
+              <LegendChip color="#7F77DD" label={`EV fleet ${evKw.toFixed(0)} kW`} />
+            </div>
+            <div style={{ marginTop: 6, fontSize: 10, color: 'var(--color-text-secondary)' }}>
+              Net to grid:{' '}
+              <span style={{ fontWeight: 500, color: reversePower > 0 ? '#A32D2D' : '#27500A' }}>
+                {netExport >= 0 ? '+' : ''}{netExport.toFixed(0)} kW ({netExport > 0 ? 'importing' : 'exporting'})
+              </span>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          {currentStep != null && (
-            <div className="text-right">
-              <div className="text-white/40 font-bold" style={{ fontSize: 10 }}>STEP</div>
-              <div className="text-white font-black" style={{ fontSize: 14 }}>#{currentStep}</div>
+
+        {/* Alarms + resolution plan */}
+        <div className="panel">
+          <div className={`ptitle ${flowSev === 'cr' ? 'danger' : 'warn'}`}>Active alarms</div>
+          {flowSev === 'cr' && (
+            <div className="alarm cr">
+              <div className="ab">CRITICAL</div>
+              <div>
+                <div className="alarm-text">
+                  Reverse power flow — feeder at {(-reversePower).toFixed(0)} kW. Trip relay armed at {relayKw} kW.
+                  {' '}Headroom {relayMargin.toFixed(0)} kW.
+                </div>
+                <div className="alarm-time">Active</div>
+              </div>
             </div>
           )}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
-            style={{
-              background: islanded ? 'rgba(233,75,75,0.2)' : 'rgba(2,201,168,0.15)',
-              border: `1px solid ${islanded ? '#E94B4B' : '#02C9A8'}40`,
-            }}>
-            <span className={`w-1.5 h-1.5 rounded-full ${islanded ? 'animate-pulse' : ''}`}
-              style={{ background: islanded ? '#E94B4B' : '#02C9A8' }} />
-            <span className="font-black tracking-wider" style={{
-              fontSize: 11,
-              color: islanded ? '#E94B4B' : '#02C9A8',
-            }}>
-              {islanded ? 'ISLANDED' : 'GRID-TIED'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Island banner */}
-      {islanded && (
-        <div className="mb-4 p-3 rounded-lg flex items-center gap-3"
-          style={{
-            background: 'rgba(233,75,75,0.12)',
-            border: '1px solid rgba(233,75,75,0.35)',
-          }}>
-          <AlertTriangle size={16} style={{ color: '#E94B4B' }} />
-          <div className="font-bold" style={{ fontSize: 12, color: '#E94B4B' }}>
-            ISLAND MODE — gas peaker forming voltage reference, grid disconnected.
-          </div>
-        </div>
-      )}
-
-      {/* Aggregation mode tabs */}
-      <div className="mb-4">
-        <div className="text-white/40 font-bold mb-2" style={{ fontSize: 11 }}>
-          AGGREGATION MODE
-        </div>
-        <div className="inline-flex rounded-lg overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-          {[
-            { key: 'individual', label: 'Individual control' },
-            { key: 'vpp',        label: 'VPP aggregation' },
-          ].map(t => {
-            const active = aggMode === t.key || (t.key === 'vpp' && aggMode === 'aggregated')
-            return (
-              <div key={t.key}
-                className="px-4 py-1.5 font-bold transition-all"
-                style={{
-                  fontSize: 11,
-                  background: active ? 'rgba(2,201,168,0.18)' : 'transparent',
-                  color: active ? '#02C9A8' : 'rgba(255,255,255,0.45)',
-                  cursor: 'default',
-                }}>
-                {t.label}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* 4 DER asset cards */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        {assets.slice(0, 4).map((asset, i) => {
-          const type = asset.type || 'pv'
-          const Icon = ASSET_ICON[type] || Battery
-          const label = asset.label || ASSET_LABEL[type] || type
-          const color = ASSET_COLOR[type] || '#ABC7FF'
-          const rated = asset.rated_kw ?? 100
-          const current = valueForAsset(type, ns)
-          const ratio = rated > 0 ? Math.min(Math.abs(current) / rated, 1) : 0
-          const sign = current >= 0 ? '+' : ''
-          const signColor = current >= 0 ? color : '#ABC7FF'
-
-          // Type-specific extra line
-          let extra = null
-          if (type === 'pv' || type === 'solar') {
-            extra = pvIrradiance != null
-              ? `${pvIrradiance.toFixed(0)} W/m²`
-              : 'Irradiance —'
-          } else if (type === 'gas' || type === 'gas_peaker' || type === 'peaker') {
-            extra = `Ramp: ${String(gasRampStatus).toUpperCase()}`
-          } else if (type === 'bess' || type === 'battery') {
-            extra = bessSocPct != null ? `SoC ${bessSocPct.toFixed(0)}%` : 'SoC —'
-          } else if (type === 'ev' || type === 'ev_fleet') {
-            extra = evFleetSocPct != null
-              ? `${evFleetCount} EVs · SoC ${evFleetSocPct.toFixed(0)}%`
-              : `${evFleetCount} EVs`
-          }
-
-          return (
-            <div key={i} className="p-3 rounded-lg"
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}>
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ background: `${color}20` }}>
-                  <Icon size={13} style={{ color }} />
-                </div>
-                <span className="text-white font-bold" style={{ fontSize: 11 }}>{label}</span>
-              </div>
-              <div className="font-black" style={{ fontSize: 20, color: signColor }}>
-                {sign}{current.toFixed(0)}
-                <span className="text-white/40 font-normal ml-1" style={{ fontSize: 11 }}>kW</span>
-              </div>
-              <div className="mt-2">
-                <div className="flex justify-between mb-1">
-                  <span className="text-white/40" style={{ fontSize: 9 }}>RATED</span>
-                  <span className="text-white/60" style={{ fontSize: 9 }}>{rated.toFixed(0)} kW</span>
-                </div>
-                <div className="w-full h-1.5 rounded-full"
-                  style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <div className="h-1.5 rounded-full transition-all duration-700" style={{
-                    width: `${ratio * 100}%`,
-                    background: color,
-                  }} />
+          {vpu >= 1.05 && (
+            <div className="alarm ma">
+              <div className="ab">MAJOR</div>
+              <div>
+                <div className="alarm-text">
+                  Feeder voltage elevated — {vv.toFixed(1)} V at GCP-01 ({vpu.toFixed(2)} pu). DER injection raising bus voltage.
                 </div>
               </div>
-              {extra && (
-                <div className="text-white/40 mt-2" style={{ fontSize: 10 }}>
-                  {extra}
-                </div>
-              )}
             </div>
-          )
-        })}
+          )}
+          {bessKw === 0 && reversePower > 0 && (
+            <div className="alarm ma">
+              <div className="ab">MAJOR</div>
+              <div>
+                <div className="alarm-text">
+                  BESS underutilised — available to absorb surplus. Dispatch pending.
+                </div>
+              </div>
+            </div>
+          )}
+          {flowSev === 'ok' && !islanded && (
+            <div className="alarm ok">
+              <div className="ab">OK</div>
+              <div><div className="alarm-text">Microgrid stable, feeder within operating envelope.</div></div>
+            </div>
+          )}
+          {islanded && (
+            <div className="alarm ma">
+              <div className="ab">ISLAND</div>
+              <div>
+                <div className="alarm-text">
+                  Grid disconnected. Gas peaker forming voltage reference. Monitoring frequency &amp; voltage.
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 8 }}>
+            <div className="ptitle ok">Resolution plan</div>
+            <div className="alarm ok"><div className="ab">STEP 1</div><div><div className="alarm-text">Curtail PV via inverter droop command toward {Math.max(0, pv.rated_kw - 20).toFixed(0)} kW.</div></div></div>
+            <div className="alarm ok"><div className="ab">STEP 2</div><div><div className="alarm-text">Dispatch BESS to absorb surplus in charge mode (∼{Math.min(bess.rated_kw, Math.abs(Math.min(0, netExport)) + 20).toFixed(0)} kW).</div></div></div>
+            <div className="alarm ok"><div className="ab">STEP 3</div><div><div className="alarm-text">Boost EV fleet managed charging via V2G smart schedule.</div></div></div>
+            <div className="alarm in"><div className="ab">STEP 4</div><div><div className="alarm-text">Monitor net flow — target +5 to +20 kW import (safe forward flow).</div></div></div>
+          </div>
+        </div>
       </div>
 
-      {/* Reverse-flow gauge + PCC voltage meter + Net export */}
-      <div className="grid grid-cols-12 gap-3">
-        {/* Reverse-flow gauge */}
-        <div className="col-span-7 p-3 rounded-lg"
-          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-white/40 font-bold" style={{ fontSize: 11 }}>
-              REVERSE-FLOW GAUGE
-            </span>
-            <span className="font-bold" style={{ fontSize: 11, color: needleColor }}>
-              {reversePowerKw >= 0 ? '+' : ''}{reversePowerKw.toFixed(0)} kW
-            </span>
-          </div>
-          <div className="relative w-full h-6 rounded-full overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.04)' }}>
-            {/* Red zone: left end up to relayPct */}
-            <div className="absolute top-0 h-full" style={{
-              left: 0,
-              width: `${relayPct}%`,
-              background: 'rgba(233,75,75,0.22)',
-            }} />
-            {/* Amber zone: relayPct to amberLo */}
-            <div className="absolute top-0 h-full" style={{
-              left: `${relayPct}%`,
-              width: `${Math.max(0, amberLo - relayPct)}%`,
-              background: 'rgba(245,158,11,0.18)',
-            }} />
-            {/* Zero line */}
-            <div className="absolute top-0 h-full w-px"
-              style={{ left: `${toPct(0)}%`, background: 'rgba(255,255,255,0.25)' }} />
-            {/* Relay threshold line */}
-            <div className="absolute top-0 h-full w-0.5"
-              style={{ left: `${relayPct}%`, background: '#E94B4B', opacity: 0.8 }} />
-            {/* Needle */}
-            <div className="absolute top-0 h-full" style={{
-              left: `${needlePct}%`,
-              width: 2,
-              background: needleColor,
-              boxShadow: `0 0 6px ${needleColor}`,
-              transition: 'left 700ms',
-            }} />
-          </div>
-          <div className="flex justify-between mt-1" style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)' }}>
-            <span>−300 kW</span>
-            <span style={{ color: '#E94B4B' }}>Relay {relayKw} kW</span>
-            <span>0</span>
-            <span>+300 kW</span>
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <Activity size={11} style={{ color: needleColor }} />
-            <span className="text-white/60" style={{ fontSize: 11 }}>
-              Relay margin:{' '}
-              <span className="font-bold" style={{ color: needleColor }}>
-                {relayMarginKw >= 0 ? '+' : ''}{Number(relayMarginKw).toFixed(0)} kW
-              </span>
-            </span>
-          </div>
-        </div>
-
-        {/* Injection voltage meter */}
-        <div className="col-span-2 p-3 rounded-lg flex flex-col items-center"
-          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <span className="text-white/40 font-bold mb-2" style={{ fontSize: 10 }}>V_PU</span>
-          <div className="relative w-6 h-28 rounded-full"
-            style={{ background: 'rgba(255,255,255,0.04)' }}>
-            {/* Colored band segments top-down: red @ top, amber mid, green base */}
-            <div className="absolute left-0 right-0 top-0 rounded-t-full" style={{
-              height: '30%',
-              background: 'rgba(233,75,75,0.2)',
-            }} />
-            <div className="absolute left-0 right-0" style={{
-              top: '30%',
-              height: '20%',
-              background: 'rgba(245,158,11,0.18)',
-            }} />
-            {/* Marker */}
-            <div className="absolute left-0 right-0" style={{
-              bottom: `${vPuPct}%`,
-              height: 3,
-              background: vColor,
-              boxShadow: `0 0 6px ${vColor}`,
-              transition: 'bottom 700ms',
-            }} />
-          </div>
-          <div className="font-black mt-2" style={{ fontSize: 14, color: vColor }}>
-            {vPuInjection != null ? vPuInjection.toFixed(3) : '—'}
-          </div>
-          <div className="text-white/40" style={{ fontSize: 9 }}>pu (PCC)</div>
-        </div>
-
-        {/* Big net-export panel */}
-        <div className="col-span-3 p-3 rounded-lg flex flex-col justify-center items-center"
-          style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.05)',
-          }}>
-          <span className="text-white/40 font-bold mb-1" style={{ fontSize: 10 }}>NET EXPORT</span>
-          <div className="font-black" style={{
-            fontSize: 36,
-            lineHeight: 1,
-            color: netExportKw > 0 ? '#02C9A8' : netExportKw < 0 ? '#ABC7FF' : 'rgba(255,255,255,0.6)',
-          }}>
-            {netExportKw >= 0 ? '+' : ''}{netExportKw.toFixed(0)}
-          </div>
-          <div className="text-white/40 mt-1" style={{ fontSize: 10 }}>
-            {netExportKw >= 0 ? 'kW exported to grid' : 'kW imported'}
-          </div>
+      {/* ROW 3: DER telemetry table */}
+      <div className="panel" style={{ marginTop: 8 }}>
+        <div className="ptitle">DER asset telemetry — individual monitoring</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Asset</th><th>Type</th><th style={{ textAlign: 'right' }}>Output (kW)</th>
+                <th style={{ textAlign: 'right' }}>SoC / %cap</th>
+                <th style={{ textAlign: 'right' }}>V (V)</th>
+                <th style={{ textAlign: 'right' }}>I (A)</th>
+                <th style={{ textAlign: 'right' }}>PF</th>
+                <th style={{ textAlign: 'center' }}>Status</th>
+                <th>Dispatch role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <TelemetryRow name={pv.id ?? 'PV-F7'}   type="Solar PV"    kw={pvKw}   kwColor="#185FA5" soc="—"  v={vv.toFixed(1)} i={(pvKw*1000/400 || 0).toFixed(0)} pf="0.99" status="Exporting" statusClass="info"  role="Primary generation" />
+              <TelemetryRow name={gas.id ?? 'GAS-F7'} type="Gas CHP"     kw={gasKw}  kwColor="#3B6D11" soc="—"  v={vv.toFixed(1)} i={(gasKw*1000/400 || 0).toFixed(0)} pf="0.97" status={gasKw > 0 ? 'Online' : 'Standby'} statusClass={gasKw > 0 ? 'ok' : 'neutral'} role={islanded ? 'Grid forming' : 'Freq. support'} />
+              <TelemetryRow name={bess.id ?? 'BESS-F7'} type="Li-ion BESS" kw={bessKw} kwColor={bessKw < 0 ? '#854F0B' : '#3B6D11'} soc={`${ns.bess_soc_pct ?? 68}%`} v={vv.toFixed(1)} i={(Math.abs(bessKw)*1000/400 || 0).toFixed(0)} pf="—" status={bessKw < 0 ? 'Charging' : bessKw > 0 ? 'Discharging' : 'Standby'} statusClass={bessKw !== 0 ? 'warn' : 'neutral'} role="Absorb reverse flow" />
+              <TelemetryRow name={evf.id ?? 'EVF-F7'}  type="EV V2G"      kw={evKw}   kwColor="#26215C" soc={`${ns.ev_fleet_soc_pct ?? 68}% avg`} v={vv.toFixed(1)} i={(Math.abs(evKw)*1000/400 || 0).toFixed(0)} pf="—" status={evKw !== 0 ? 'Managed' : 'Idle'} statusClass="purple" role={evKw < 0 ? 'Absorb surplus' : 'Load balancing'} />
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
+  )
+}
+
+function Strip({ label, value, severity }) {
+  return (
+    <div className="strip">
+      <span className="strip-l">{label}</span>
+      <span className={`strip-v ${severity ?? ''}`}>{value}</span>
+    </div>
+  )
+}
+
+function LegendChip({ color, label }) {
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      <span style={{ width: 8, height: 8, background: color, borderRadius: 2, display: 'inline-block' }} />
+      {label}
+    </span>
+  )
+}
+
+function TelemetryRow({ name, type, kw, kwColor, soc, v, i, pf, status, statusClass, role }) {
+  return (
+    <tr>
+      <td style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>{name}</td>
+      <td style={{ color: 'var(--color-text-secondary)' }}>{type}</td>
+      <td style={{ textAlign: 'right', color: kwColor, fontWeight: 500 }}>{kw.toFixed ? kw.toFixed(0) : kw}</td>
+      <td style={{ textAlign: 'right', color: 'var(--color-text-secondary)' }}>{soc}</td>
+      <td style={{ textAlign: 'right' }}>{v}</td>
+      <td style={{ textAlign: 'right' }}>{i}</td>
+      <td style={{ textAlign: 'right' }}>{pf}</td>
+      <td style={{ textAlign: 'center' }}><span className={`badge ${statusClass}`}>{status}</span></td>
+      <td style={{ fontSize: 9, color: 'var(--color-text-secondary)' }}>{role}</td>
+    </tr>
   )
 }

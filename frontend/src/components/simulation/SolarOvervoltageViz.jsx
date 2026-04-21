@@ -1,374 +1,406 @@
-import { useState, useEffect } from 'react'
-import { Sun, Activity, AlertTriangle, CheckCircle, Gauge } from 'lucide-react'
-
 /**
- * SolarOvervoltageViz — LV feeder droop-curtailment visualization for REQ-21.
- * Renders a horizontal 7-node feeder topology with per-node voltage heat coloring,
- * the 5-step algorithm pill progression, a live droop equation, and an inverter
- * fleet table with setpoint progress bars.
+ * SolarOvervoltageViz — faithful React port of
+ * simulation_sample/smoc_solar_overvoltage_dashboard.html.
+ *
+ * Design classes come from src/styles/smoc-samples.css, scoped under the
+ * root `.smoc-sim` div so the light palette doesn't leak into the rest of
+ * the dark app. Data points bind to networkState + scenario.parameters
+ * from the local simulation engine.
  */
 
-const NODE_COUNT = 7
-const NODE_SPACING = 110
-const SVG_PADDING = 70
-const NODE_Y = 100
-const NODE_RADIUS = 22
-
-const ALGO_STEPS = [
-  { key: 'monitor',  label: 'Monitor'  },
-  { key: 'detect',   label: 'Detect'   },
-  { key: 'compute',  label: 'Compute'  },
-  { key: 'curtail',  label: 'Curtail'  },
-  { key: 'restore',  label: 'Restore'  },
-]
-
-// Voltage -> color gradient (230 green -> 246 amber -> 253 red)
-function voltageColor(v) {
-  if (v == null) return '#6B7280'
-  if (v >= 253) return '#E94B4B'
-  if (v >= 246) return '#F59E0B'
-  return '#02C9A8'
+const NODE_STATE = (v, vOnset, vLimit) => {
+  if (v >= vLimit) return 'over'
+  if (v >= vOnset) return 'warn'
+  return 'ok'
 }
 
-function voltageBadgeColor(v) {
-  if (v == null) return { bg: '#6B728020', fg: '#6B7280' }
-  if (v > 253) return { bg: '#E94B4B20', fg: '#E94B4B' }
-  if (v >= 246) return { bg: '#F59E0B20', fg: '#F59E0B' }
-  return { bg: '#02C9A820', fg: '#02C9A8' }
+const BAND_COLOR = {
+  over: '#E24B4A',
+  warn: '#EF9F27',
+  ok:   '#639922',
+}
+
+const NODE_STROKE = {
+  over: '#E24B4A',
+  warn: '#EF9F27',
+  ok:   '#639922',
+}
+const NODE_FILL = {
+  over: '#FCEBEB',
+  warn: '#FAEEDA',
+  ok:   '#EAF3DE',
+}
+const NODE_TEXT = {
+  over: '#791F1F',
+  warn: '#633806',
+  ok:   '#27500A',
+}
+
+const ALGO_STEPS = [
+  { num: 1, text: 'Measure V at each node',              sub: 'Smart meter telemetry · 1 s cycle' },
+  { num: 2, text: <>Detect violation: V &gt; V<sub>max</sub></>, sub: '253 V threshold · tip node voltage' },
+  { num: 3, text: 'Rank inverters by proximity',         sub: 'Electrical distance from tip' },
+  { num: 4, text: <>Compute P<sub>curtail</sub> per inverter</>, sub: <>Droop: ΔP = k · (V − V<sub>ref</sub>)</> },
+  { num: 5, text: 'Dispatch setpoint via DER comms',     sub: 'IEC 61850 / SunSpec Modbus' },
+  { num: 6, text: <>Verify V returns below V<sub>max</sub></>, sub: 'Confirm & close alarm if resolved' },
+]
+
+// Map live algorithm_step to the 6-row stepper (done/active/pending).
+function stepStates(current) {
+  const currentIdx = (() => {
+    if (!current || current === 'monitor') return 0
+    if (current === 'detect') return 1
+    if (current === 'compute') return 3
+    if (current === 'curtail') return 4
+    if (current === 'restore') return 5
+    return 0
+  })()
+  return [0,1,2,3,4,5].map((i) => i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending')
 }
 
 export default function SolarOvervoltageViz({ scenario, currentStep, networkState }) {
-  const params = scenario?.parameters || {}
-  const standards = params.standards || []
-  const vRef = params.v_ref ?? 230
-  const kKwPerV = params.k_kw_per_v ?? params.droop_k_kw_per_v ?? 10
+  const params = scenario?.parameters ?? {}
+  const topo = params.topology ?? {}
+  const nodes = topo.nodes ?? []
+  const invFleet = topo.inverters ?? []
+  const v_nominal = params.v_nominal ?? 230
+  const v_onset = params.v_onset ?? 246
+  const v_limit = params.v_limit ?? 253
+  const k = params.k_droop_kw_per_v ?? 2.5
 
-  const vTip = networkState?.v_tip ?? networkState?.v_tip_v ?? null
-  const nodeVoltages = networkState?.node_voltages || networkState?.feeder_voltages || {}
-  const algorithmStep = networkState?.algorithm_step || 'monitor'
-  const inverters = networkState?.inverters || null
-  const deltaV = vTip != null ? (vTip - vRef) : 0
-  const deltaP = kKwPerV * deltaV
+  const ns = networkState ?? {}
+  const v_tip = ns.v_tip ?? v_nominal
+  const delta_v = ns.delta_v ?? Math.max(0, +(v_tip - v_limit).toFixed(2))
+  const delta_p = ns.delta_p_kw ?? +(k * delta_v).toFixed(2)
+  const totalCurtail = ns.total_curtailment_kw ?? 0
+  const algoStep = ns.algorithm_step ?? 'monitor'
 
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 800)
-    return () => clearInterval(id)
-  }, [])
-
-  const svgWidth = SVG_PADDING * 2 + NODE_COUNT * NODE_SPACING
-  const svgHeight = 200
-
-  // Build nodes: N1..N7
-  const nodes = Array.from({ length: NODE_COUNT }).map((_, i) => {
-    const id = `N${i + 1}`
-    const v = nodeVoltages[id] ?? nodeVoltages[id.toLowerCase()] ?? null
-    return { id, index: i, voltage: v, x: SVG_PADDING + (i + 1) * NODE_SPACING, y: NODE_Y }
+  const nodeVoltages = ns.node_voltages ?? {}
+  const nodeRows = nodes.map((n) => {
+    const v = nodeVoltages[n.id] ?? v_nominal
+    const state = NODE_STATE(v, v_onset, v_limit)
+    return { id: n.id, v, state }
   })
 
-  const lastNode = nodes[nodes.length - 1]
-  const vTipBadge = voltageBadgeColor(vTip)
-  const activeStepIdx = ALGO_STEPS.findIndex(s => s.key === algorithmStep)
-  const equationActive = algorithmStep === 'compute' || algorithmStep === 'curtail'
+  const invRows = (ns.inverters ?? []).map((inv) => ({
+    ...inv,
+    addr: inv.customer ?? invFleet.find(f => f.id === inv.id)?.customer ?? '—',
+  }))
+
+  const steps = stepStates(algoStep)
+
+  const phaseLabel = {
+    monitor: 'Monitoring',
+    detect:  'Detecting overvoltage',
+    compute: 'Computing curtailment',
+    curtail: 'Curtailment in progress',
+    restore: 'Voltage restored',
+  }[algoStep] ?? 'Monitoring'
+
+  const alarmSeverity = v_tip >= v_limit ? 'cr' : v_tip >= v_onset ? 'ma' : 'ok'
+  const topbarStatusClass =
+    alarmSeverity === 'cr' ? 'danger' :
+    alarmSeverity === 'ma' ? 'warn' :
+    'ok'
 
   return (
-    <div className="glass-card p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: 'rgba(245,158,11,0.15)' }}>
-            <Sun size={18} style={{ color: '#F59E0B' }} />
-          </div>
-          <div>
-            <div className="text-white font-black" style={{ fontSize: 15 }}>
-              LV Feeder Droop Curtailment
-            </div>
-            <div className="text-white/40" style={{ fontSize: 11 }}>
-              {params.feeder_name || 'LV-F07'} · 230V nominal · {NODE_COUNT} nodes
-            </div>
+    <div className="smoc-sim">
+      {/* TOP BAR */}
+      <div className="topbar">
+        <div>
+          <div className="topbar-title">SMOC — Smart Meter Operations Centre</div>
+          <div className="topbar-meta">
+            Simulation · {params.feeder_name ?? 'LV Feeder'}
+            {currentStep ? ` · Step ${currentStep}/${scenario?.total_steps ?? '?'}` : ''}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          {currentStep != null && (
-            <div className="text-right">
-              <div className="text-white/40 font-bold" style={{ fontSize: 10 }}>STEP</div>
-              <div className="text-white font-black" style={{ fontSize: 14 }}>#{currentStep}</div>
-            </div>
-          )}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
-            style={{ background: vTipBadge.bg, border: `1px solid ${vTipBadge.fg}40` }}>
-            <Gauge size={12} style={{ color: vTipBadge.fg }} />
-            <span className="text-white/40 font-bold" style={{ fontSize: 10 }}>V_TIP</span>
-            <span className="font-black" style={{ fontSize: 18, color: vTipBadge.fg }}>
-              {vTip != null ? `${vTip.toFixed(1)} V` : '—'}
-            </span>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+            Phase: <span style={{ color: '#185FA5', fontWeight: 500 }}>{phaseLabel}</span>
+          </div>
+          <div className={`topbar-status ${topbarStatusClass}`}>
+            <div className={`pulse ${alarmSeverity === 'ma' ? 'amber' : alarmSeverity === 'ok' ? 'green' : ''}`} />
+            {alarmSeverity === 'cr' ? 'ACTIVE ALARM' : alarmSeverity === 'ma' ? 'WARNING' : 'NORMAL'}
           </div>
         </div>
       </div>
 
-      {/* Feeder topology SVG */}
-      <div className="overflow-x-auto">
-        <svg width={svgWidth} height={svgHeight} viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          style={{ minWidth: svgWidth }}>
-          <defs>
-            <pattern id="solarFlow" patternUnits="userSpaceOnUse" width="24" height="4">
-              <rect width="24" height="4" fill="none" />
-              <rect x={tick % 2 === 0 ? 0 : 12} y="0" width="12" height="4"
-                fill="#02C9A8" opacity="0.6" rx="2" />
-            </pattern>
-            <filter id="solarNodeGlow">
-              <feGaussianBlur stdDeviation="2" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
+      {/* ROW 1: KPIs */}
+      <div className="grid">
+        <div className="panel">
+          <div className="panel-title">{params.feeder_name ?? 'Feeder'} — Network status</div>
+          <div className="metrics">
+            <div className="metric">
+              <div className="metric-label">Peak voltage</div>
+              <div className={`metric-val ${alarmSeverity === 'cr' ? 'danger' : alarmSeverity === 'ma' ? 'warn' : 'ok'}`}>
+                {v_tip.toFixed(1)}<span className="metric-unit"> V</span>
+              </div>
+            </div>
+            <div className="metric">
+              <div className="metric-label">Net export</div>
+              <div className="metric-val warn">
+                {((ns.pv_output_kw ?? 0) - (ns.load_kw ?? 0)).toFixed(0)}<span className="metric-unit"> kW</span>
+              </div>
+            </div>
+            <div className="metric">
+              <div className="metric-label">Solar gen.</div>
+              <div className="metric-val">
+                {(ns.pv_output_kw ?? 0).toFixed(0)}<span className="metric-unit"> kW</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-          {/* Substation on left */}
-          <g transform={`translate(${SVG_PADDING - 20}, ${NODE_Y})`}>
-            <rect x="-20" y="-25" width="40" height="50" rx="6"
-              fill="#0d1117" stroke="#02C9A8" strokeWidth="1.5" />
-            <text x="0" y="-30" textAnchor="middle" fill="#02C9A8" fontSize="9" fontWeight="bold">
-              SUBSTATION
-            </text>
-            <line x1="-10" y1="-10" x2="10" y2="-10" stroke="#02C9A8" strokeWidth="2" />
-            <line x1="-10" y1="0" x2="10" y2="0" stroke="#02C9A8" strokeWidth="2" />
-            <line x1="-10" y1="10" x2="10" y2="10" stroke="#02C9A8" strokeWidth="2" />
-          </g>
+        <div className="panel">
+          <div className="panel-title">Solar irradiance &amp; load</div>
+          <Strip label="Irradiance"          value={`${Math.round(800 + (v_tip - v_nominal) * 15)} W/m²`} />
+          <Strip label="Neighbourhood load"  value={`${(ns.load_kw ?? 0).toFixed(0)} kW`} />
+          <Strip label="Active inverters"    value={`${invRows.length || invFleet.length} / ${invFleet.length || invRows.length}`} />
+          <Strip label="Power factor (avg)"  value="0.98 lag" />
+        </div>
 
-          {/* Feeder line from substation to last node */}
-          {lastNode && (
+        <div className="panel">
+          <div className={`panel-title ${alarmSeverity === 'cr' ? 'danger' : 'warn'}`}>
+            Active alarms {alarmSeverity !== 'ok' ? '(2)' : '(0)'}
+          </div>
+          {alarmSeverity !== 'ok' ? (
             <>
-              <line
-                x1={SVG_PADDING}
-                y1={NODE_Y}
-                x2={lastNode.x}
-                y2={NODE_Y}
-                stroke="#ABC7FF"
-                strokeWidth="3"
-                opacity="0.35"
-              />
-              <line
-                x1={SVG_PADDING}
-                y1={NODE_Y}
-                x2={lastNode.x}
-                y2={NODE_Y}
-                stroke="url(#solarFlow)"
-                strokeWidth="5"
-                opacity="0.5"
-              />
+              <div className={`alarm ${alarmSeverity}`}>
+                <div><div className="ab">{alarmSeverity === 'cr' ? 'CRITICAL' : 'MAJOR'}</div></div>
+                <div>
+                  <div className="alarm-text">
+                    Overvoltage — tip node {v_tip.toFixed(1)} V
+                    {alarmSeverity === 'cr' ? ` exceeds ${v_limit} V` : ` approaching ${v_limit} V limit`}
+                  </div>
+                  <div className="alarm-time">Active · Step {currentStep ?? '—'}</div>
+                </div>
+              </div>
+              <div className="alarm in">
+                <div><div className="ab">INFO</div></div>
+                <div>
+                  <div className="alarm-text">
+                    {totalCurtail > 0
+                      ? `Curtailment dispatched — ${totalCurtail.toFixed(1)} kW across inverters`
+                      : 'Droop algorithm armed'}
+                  </div>
+                  <div className="alarm-time">Automatic action</div>
+                </div>
+              </div>
             </>
+          ) : (
+            <div className="alarm ok">
+              <div><div className="ab">OK</div></div>
+              <div><div className="alarm-text">All nodes within nominal band</div></div>
+            </div>
           )}
-
-          {/* Nodes */}
-          {nodes.map(n => {
-            const color = voltageColor(n.voltage)
-            const isTip = n.id === `N${NODE_COUNT}`
-            const high = n.voltage != null && n.voltage >= 246
-            return (
-              <g key={n.id} transform={`translate(${n.x}, ${n.y})`}>
-                {high && (
-                  <circle r={NODE_RADIUS + 5} fill="none" stroke={color} strokeWidth="1"
-                    opacity="0.3" filter="url(#solarNodeGlow)">
-                    <animate attributeName="r"
-                      values={`${NODE_RADIUS + 3};${NODE_RADIUS + 7};${NODE_RADIUS + 3}`}
-                      dur="1.5s" repeatCount="indefinite" />
-                  </circle>
-                )}
-                <circle r={NODE_RADIUS} fill="#0d1117" stroke={color} strokeWidth="2.5" />
-                <circle r="8" fill={color} opacity="0.25" />
-                <text y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">
-                  {n.id}
-                </text>
-                {/* Voltage label */}
-                <text y={NODE_RADIUS + 16} textAnchor="middle" fill={color}
-                  fontSize="10" fontWeight="700">
-                  {n.voltage != null ? `${n.voltage.toFixed(1)} V` : '—'}
-                </text>
-                {isTip && (
-                  <text y={-NODE_RADIUS - 8} textAnchor="middle" fill="#ABC7FF"
-                    fontSize="8" fontWeight="bold">
-                    TIP
-                  </text>
-                )}
-              </g>
-            )
-          })}
-        </svg>
+        </div>
       </div>
 
-      {/* Algorithm step pills */}
-      <div className="mt-4">
-        <div className="text-white/40 font-bold mb-2" style={{ fontSize: 11 }}>
-          ALGORITHM STATE
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {ALGO_STEPS.map((s, i) => {
-            const active = i === activeStepIdx
-            const done = i < activeStepIdx
+      {/* ROW 2: Voltage profile + Algorithm + Curtailment calc */}
+      <div className="grid-bot">
+        {/* Voltage profile */}
+        <div className="panel">
+          <div className="panel-title">{params.feeder_name ?? 'Feeder'} — Node voltage profile</div>
+          <div style={{ marginBottom: 6, fontSize: 9, color: 'var(--color-text-secondary)' }}>
+            Nominal {v_nominal} V · Limit {v_limit} V · Red = violation
+          </div>
+          {nodeRows.map((n) => {
+            const lo = v_nominal - 5
+            const hi = v_limit + 5
+            const pct = Math.min(100, Math.max(0, ((n.v - lo) / (hi - lo)) * 100))
             return (
-              <div key={s.key} className="flex items-center gap-2">
-                <div
-                  className={`px-3 py-1.5 rounded-full font-bold transition-all ${active ? 'animate-pulse' : ''}`}
-                  style={{
-                    fontSize: 10,
-                    background: active
-                      ? 'rgba(2,201,168,0.2)'
-                      : done
-                        ? 'rgba(171,199,255,0.1)'
-                        : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${active ? '#02C9A8' : done ? 'rgba(171,199,255,0.25)' : 'rgba(255,255,255,0.08)'}`,
-                    color: active ? '#02C9A8' : done ? '#ABC7FF' : 'rgba(255,255,255,0.4)',
-                  }}
-                >
-                  {done && <CheckCircle size={10} className="inline mr-1" />}
-                  {s.label.toUpperCase()}
+              <div className="vbar-row" key={n.id}>
+                <div className="vbar-label">{n.id}</div>
+                <div className="vbar-bg">
+                  <div className="vbar-fill" style={{ width: `${pct}%`, background: BAND_COLOR[n.state] }} />
                 </div>
-                {i < ALGO_STEPS.length - 1 && (
-                  <div className="w-4 h-px" style={{
-                    background: done ? '#ABC7FF60' : 'rgba(255,255,255,0.1)',
-                  }} />
-                )}
+                <div className={`vbar-val ${n.state}`}>{n.v.toFixed(1)} V</div>
               </div>
             )
           })}
+          <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 9, color: 'var(--color-text-secondary)' }}>
+            <Legend color="#E24B4A" label="Overvoltage" />
+            <Legend color="#639922" label="Normal" />
+            <Legend color="#EF9F27" label="Warning" />
+          </div>
         </div>
-      </div>
 
-      {/* Droop equation panel */}
-      <div className="mt-4 p-3 rounded-lg"
-        style={{
-          background: equationActive ? 'rgba(2,201,168,0.08)' : 'rgba(255,255,255,0.02)',
-          border: `1px solid ${equationActive ? 'rgba(2,201,168,0.25)' : 'rgba(255,255,255,0.06)'}`,
-        }}>
-        <div className="flex items-center gap-2 mb-1">
-          <Activity size={11} style={{ color: equationActive ? '#02C9A8' : 'rgba(255,255,255,0.4)' }} />
-          <span className="font-bold" style={{
-            fontSize: 10,
-            color: equationActive ? '#02C9A8' : 'rgba(255,255,255,0.4)',
-          }}>DROOP CURTAILMENT</span>
+        {/* Algorithm stepper */}
+        <div className="panel">
+          <div className="panel-title">Droop curtailment algorithm</div>
+          <div className="algo-steps">
+            {ALGO_STEPS.map((s, i) => (
+              <div className={`algo-step ${steps[i]}`} key={i}>
+                <div className="step-num">{s.num}</div>
+                <div>
+                  <div className="step-text">{s.text}</div>
+                  <div className="step-sub">{s.sub}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        {equationActive && vTip != null ? (
-          <div className="font-mono text-white" style={{ fontSize: 13 }}>
-            ΔP = k × (V_tip − V_ref) ={' '}
-            <span style={{ color: '#ABC7FF' }}>{kKwPerV}</span> ×{' '}
-            <span style={{ color: '#F59E0B' }}>{deltaV.toFixed(2)} V</span> ={' '}
-            <span style={{ color: '#02C9A8', fontWeight: 700 }}>{deltaP.toFixed(1)} kW</span>
-          </div>
-        ) : (
-          <div className="text-white/40" style={{ fontSize: 11 }}>
-            Curtailment inactive — monitoring feeder voltage.
-          </div>
-        )}
-      </div>
 
-      {/* Inverter fleet table */}
-      <div className="mt-4">
-        <div className="text-white/40 font-bold mb-2" style={{ fontSize: 11 }}>
-          INVERTER FLEET
-        </div>
-        {!inverters || inverters.length === 0 ? (
-          <div className="p-4 rounded-lg text-center text-white/40"
-            style={{ background: 'rgba(255,255,255,0.02)', fontSize: 11 }}>
-            Awaiting step data…
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full" style={{ fontSize: 11 }}>
-              <thead>
-                <tr className="text-white/40 font-bold text-left" style={{ fontSize: 10 }}>
-                  <th className="py-2 px-2">ID</th>
-                  <th className="py-2 px-2">NODE</th>
-                  <th className="py-2 px-2 text-right">RATED</th>
-                  <th className="py-2 px-2 text-right">AVAIL</th>
-                  <th className="py-2 px-2 text-right">SETPT</th>
-                  <th className="py-2 px-2">UTILIZATION</th>
-                  <th className="py-2 px-2 text-right">CURT %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inverters.map(inv => {
-                  const curtailing = !!inv.is_curtailing
-                  const avail = inv.available_kw ?? inv.rated_kw ?? 0
-                  const setpt = inv.setpoint_kw ?? avail
-                  const ratio = avail > 0 ? Math.max(0, Math.min(1, setpt / avail)) : 0
-                  const curtPct = inv.curtailed_pct ?? (avail > 0 ? Math.max(0, (1 - ratio) * 100) : 0)
-                  return (
-                    <tr key={inv.id || inv.inverter_id}
-                      style={{
-                        background: curtailing ? 'rgba(233,75,75,0.08)' : 'transparent',
-                        borderTop: '1px solid rgba(255,255,255,0.04)',
-                      }}>
-                      <td className="py-2 px-2 text-white font-bold">
-                        {inv.id || inv.inverter_id}
-                      </td>
-                      <td className="py-2 px-2 text-white/60">{inv.node || '—'}</td>
-                      <td className="py-2 px-2 text-right text-white/60">
-                        {(inv.rated_kw ?? 0).toFixed(1)}
-                      </td>
-                      <td className="py-2 px-2 text-right text-white/60">
-                        {avail.toFixed(1)}
-                      </td>
-                      <td className="py-2 px-2 text-right font-bold"
-                        style={{ color: curtailing ? '#E94B4B' : '#02C9A8' }}>
-                        {setpt.toFixed(1)}
-                      </td>
-                      <td className="py-2 px-2">
-                        <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                          <div className="h-1.5 rounded-full transition-all duration-700" style={{
-                            width: `${ratio * 100}%`,
-                            background: curtailing ? '#E94B4B' : '#02C9A8',
-                          }} />
-                        </div>
-                      </td>
-                      <td className="py-2 px-2 text-right font-bold"
-                        style={{ color: curtPct > 0 ? '#F59E0B' : 'rgba(255,255,255,0.4)' }}>
-                        {curtPct.toFixed(0)}%
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Footer legend */}
-      <div className="flex items-center gap-3 mt-4 flex-wrap pt-3 border-t"
-        style={{ borderColor: 'rgba(171,199,255,0.08)' }}>
-        <div className="flex items-center gap-1.5">
-          <AlertTriangle size={10} className="text-white/40" />
-          <span className="text-white/40 font-bold" style={{ fontSize: 10 }}>STANDARDS:</span>
-        </div>
-        {standards.length > 0 ? standards.map((s, i) => (
-          <span key={i} className="px-2 py-0.5 rounded"
+        {/* Curtailment calculation */}
+        <div className="panel">
+          <div className="panel-title">Curtailment calculation</div>
+          <div
             style={{
-              fontSize: 10,
-              background: 'rgba(171,199,255,0.08)',
-              border: '1px solid rgba(171,199,255,0.15)',
-              color: '#ABC7FF',
-            }}>
-            {s}
-          </span>
-        )) : (
-          <span className="text-white/30" style={{ fontSize: 10 }}>—</span>
-        )}
-        <div className="ml-auto flex items-center gap-3">
-          {[
-            { color: '#02C9A8', label: '<246V' },
-            { color: '#F59E0B', label: '≥246V' },
-            { color: '#E94B4B', label: '>253V' },
-          ].map(item => (
-            <div key={item.label} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ background: item.color }} />
-              <span className="text-white/40" style={{ fontSize: 10 }}>{item.label}</span>
-            </div>
-          ))}
+              background: 'var(--color-background-secondary)', borderRadius: 6,
+              padding: '8px 10px', marginBottom: 6,
+              fontSize: 10, fontFamily: 'var(--font-mono, monospace)',
+              color: 'var(--color-text-primary)', lineHeight: 1.7,
+            }}
+          >
+            V<sub>tip</sub> = <span style={{ color: '#993C1D', fontWeight: 500 }}>{v_tip.toFixed(1)} V</span><br />
+            V<sub>ref</sub> = {v_nominal.toFixed(1)} V<br />
+            V<sub>max</sub> = {v_limit.toFixed(1)} V<br />
+            ΔV = <span style={{ color: '#993C1D', fontWeight: 500 }}>{delta_v >= 0 ? '+' : ''}{delta_v.toFixed(2)} V</span><br />
+            <br />
+            Droop gain k = {k} kW/V<br />
+            ΔP<sub>total</sub> = k × ΔV<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;= {k} × {delta_v.toFixed(2)} = <span style={{ color: '#993C1D', fontWeight: 500 }}>{delta_p.toFixed(2)} kW</span><br />
+            <br />
+            Split across {invRows.filter(r => r.is_curtailing).length || 6} inverters<br />
+            proportional to P<sub>available</sub>:<br />
+            New P<sub>set</sub> = P<sub>avail</sub> − ΔP<br />
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+            k is configurable. Higher k = faster voltage response but more solar curtailment. Droop is proportional — voltage violation drives curtailment depth linearly.
+          </div>
         </div>
       </div>
+
+      {/* ROW 3: Smart inverter table + Network topology SVG */}
+      <div className="grid-2" style={{ marginTop: 8 }}>
+        {/* Inverter table */}
+        <div className="panel">
+          <div className="panel-title">
+            Smart inverter status — {params.feeder_name ?? 'Feeder'} ({invRows.length} DER units)
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Address</th>
+                <th>P<sub>avail</sub> kW</th><th>P<sub>set</sub> kW</th>
+                <th>Output %</th><th>Node</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invRows.map((inv) => {
+                const pct = Math.round(((inv.setpoint_kw ?? inv.available_kw ?? 0) / Math.max(inv.available_kw ?? inv.rated_kw ?? 1, 0.01)) * 100)
+                const nodeV = nodeVoltages[inv.node] ?? v_nominal
+                return (
+                  <tr key={inv.id}>
+                    <td style={{ fontWeight: 500 }}>{inv.id}</td>
+                    <td style={{ fontSize: 9, color: 'var(--color-text-secondary)' }}>{inv.addr}</td>
+                    <td>{(inv.available_kw ?? 0).toFixed(1)}</td>
+                    <td>{(inv.setpoint_kw ?? 0).toFixed(1)}</td>
+                    <td>
+                      <div className="pbar-wrap">
+                        <div
+                          className={`pbar ${inv.is_curtailing ? 'warn' : 'ok'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>{' '}
+                      {pct}%
+                    </td>
+                    <td style={{ fontSize: 9 }}>{inv.node} {nodeV.toFixed(1)} V</td>
+                    <td>
+                      <span className={`badge ${inv.is_curtailing ? 'warn' : 'ok'}`}>
+                        {inv.is_curtailing ? 'Curtailing' : 'Normal'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Network topology SVG */}
+        <div className="panel">
+          <div className="panel-title">{params.feeder_name ?? 'Feeder'} — Network topology</div>
+          <svg width="100%" viewBox="0 0 340 290" role="img">
+            <title>LV feeder topology</title>
+            <defs>
+              <marker id="solar-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </marker>
+            </defs>
+
+            <rect x="8" y="8" width="324" height="274" rx="8" fill="none" stroke="var(--color-border-tertiary)" strokeWidth="0.5" strokeDasharray="4 3" />
+            <text x="20" y="22" fontSize="9" fill="var(--color-text-secondary)">Suburb · {params.feeder_name ?? 'Feeder'}</text>
+
+            {/* Substation */}
+            <rect x="135" y="26" width="70" height="28" rx="5" fill="#E6F1FB" stroke="#185FA5" strokeWidth="0.5" />
+            <text x="170" y="37" fontSize="9" fontWeight="500" fill="#0C447C" textAnchor="middle">Zone Sub.</text>
+            <text x="170" y="48" fontSize="8" fill="#185FA5" textAnchor="middle">11kV/400V TX</text>
+            <line x1="170" y1="54" x2="170" y2="78" stroke="#888780" strokeWidth="1.5" markerEnd="url(#solar-arrow)" />
+
+            {nodeRows.slice(0, 7).map((n, idx) => {
+              const col = idx % 2 === 0 ? 135 : 217
+              const row = 78 + Math.floor(idx / 2) * 44
+              const state = n.state
+              const fill = NODE_FILL[state]
+              const stroke = NODE_STROKE[state]
+              const text = NODE_TEXT[state]
+              const strokeW = state === 'over' ? 1.2 : 0.5
+              return (
+                <g key={n.id}>
+                  <rect x={col} y={row} width="70" height="24" rx="4" fill={fill} stroke={stroke} strokeWidth={strokeW} />
+                  <text x={col + 35} y={row + 15} fontSize="9" fontWeight="500" fill={text} textAnchor="middle">
+                    {state === 'over' ? '⚠ ' : ''}{n.id} · {n.v.toFixed(1)} V
+                  </text>
+                </g>
+              )
+            })}
+
+            <text x="300" y="175" fontSize="14">☀</text>
+            <text x="300" y="223" fontSize="14">☀</text>
+            <text x="300" y="267" fontSize="14">☀</text>
+
+            <rect x="12" y="240" width="8" height="8" rx="2" fill="#EAF3DE" stroke="#639922" strokeWidth="0.5" />
+            <text x="24" y="248" fontSize="8" fill="var(--color-text-secondary)">Normal</text>
+            <rect x="12" y="254" width="8" height="8" rx="2" fill="#FAEEDA" stroke="#EF9F27" strokeWidth="0.5" />
+            <text x="24" y="262" fontSize="8" fill="var(--color-text-secondary)">Warning</text>
+            <rect x="12" y="268" width="8" height="8" rx="2" fill="#FCEBEB" stroke="#E24B4A" strokeWidth="0.8" />
+            <text x="24" y="276" fontSize="8" fill="var(--color-text-secondary)">Violation</text>
+          </svg>
+        </div>
+      </div>
+
+      {/* Standards footer */}
+      {Array.isArray(params.standards) && params.standards.length > 0 && (
+        <div className="panel" style={{ marginTop: 8 }}>
+          <div className="panel-title">Standards</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {params.standards.map(s => <span key={s} className="badge info">{s}</span>)}
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function Strip({ label, value }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      background: 'var(--color-background-secondary)', borderRadius: 6,
+      padding: '5px 8px', marginBottom: 5, fontSize: 10,
+    }}>
+      <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
+      <span style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>{value}</span>
+    </div>
+  )
+}
+
+function Legend({ color, label }) {
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      <span style={{ width: 10, height: 4, background: color, borderRadius: 2, display: 'inline-block' }} />
+      {label}
+    </span>
   )
 }
