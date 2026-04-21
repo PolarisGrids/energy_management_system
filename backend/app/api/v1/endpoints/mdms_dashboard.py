@@ -61,7 +61,7 @@ class AlarmsOut(BaseModel):
 
 @router.get("/summary", response_model=SummaryOut)
 def summary(
-    hours: int = Query(24, ge=1, le=168),
+    hours: int = Query(24, ge=1, le=720),
     _: User = Depends(get_current_user),
 ) -> SummaryOut:
     fleet = md.fleet_counts()
@@ -88,7 +88,7 @@ def summary(
 
 @router.get("/load-profile", response_model=LoadProfileOut)
 def load_profile(
-    hours: int = Query(24, ge=1, le=168),
+    hours: int = Query(24, ge=1, le=720),
     _: User = Depends(get_current_user),
 ) -> LoadProfileOut:
     pts = md.network_load_hourly(hours=hours)
@@ -100,7 +100,7 @@ def load_profile(
 
 @router.get("/alarms", response_model=AlarmsOut)
 def alarms(
-    hours: int = Query(24, ge=1, le=168),
+    hours: int = Query(24, ge=1, le=720),
     limit: int = Query(25, ge=1, le=200),
     _: User = Depends(get_current_user),
 ) -> AlarmsOut:

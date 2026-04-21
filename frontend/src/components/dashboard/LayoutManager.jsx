@@ -4,6 +4,7 @@
 // behind a "Manage layouts" button.
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Plus, Trash2, Star, Edit2, Copy, Check } from 'lucide-react'
 import { dashboardsAPI } from '@/services/api'
 
@@ -91,9 +92,12 @@ export default function LayoutManager({ open, onClose, onLayoutChanged }) {
     }
   }
 
-  return (
+  // Render via portal so the modal escapes any ancestor that establishes a
+  // containing block (e.g. the dashboard page's animate-slide-up transform),
+  // which would otherwise clip `position: fixed`.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
+      className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center"
       data-testid="layout-manager-modal"
       onClick={onClose}
     >
@@ -217,6 +221,7 @@ export default function LayoutManager({ open, onClose, onLayoutChanged }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

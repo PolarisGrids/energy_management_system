@@ -391,8 +391,10 @@ export const dashboardsAPI = {
 }
 
 // ─── SLA KPIs — month-to-date SLA per metrology profile (MDMS validation_rules)
+// and remote CONNECT/DISCONNECT command SLAs (command_log; currently mocked).
 export const slaAPI = {
   kpis: () => api.get('/sla/kpis'),
+  connectDisconnect: () => api.get('/sla/connect-disconnect'),
 }
 
 // ─── MDMS-sourced dashboard widgets (meter counts / comm / alarms / load) ──

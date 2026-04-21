@@ -1,9 +1,9 @@
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
   Wifi, WifiOff, AlertTriangle, CheckCircle, Zap,
   Activity, MapPin, Battery, Car, RefreshCw, LayoutGrid,
-  FileText, CalendarDays, Clock,
+  FileText, CalendarDays, Clock, PlugZap, Power,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
 import { derAPI, dashboardsAPI, slaAPI, mdmsDashboardAPI } from '@/services/api'
@@ -34,6 +34,21 @@ const SkeletonMetricCard = () => (
     </div>
   </div>
 )
+
+// FastAPI 422 responses return `detail` as an array of {msg, loc, ...} objects;
+// other errors return a plain string. Coerce anything stringy into a readable
+// message so the banner never shows "[object Object]".
+const formatApiError = (err, fallback = 'Unavailable') => {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d === 'string' ? d : d?.msg || JSON.stringify(d)))
+      .join('; ')
+  }
+  if (detail && typeof detail === 'object') return detail.msg || JSON.stringify(detail)
+  return err?.message ?? fallback
+}
 
 const ErrorBanner = ({ message, onRetry }) => (
   <div
@@ -209,10 +224,92 @@ const SlaSection = ({ sla, loading, error, onRetry }) => {
   )
 }
 
+// ─── Connect / Disconnect command SLA (MTD, currently mock-backed) ─────────
+
+const COMMAND_SLA_ICON = {
+  DISCONNECT: Power,
+  CONNECT: PlugZap,
+}
+
+const COMMAND_SLA_ORDER = ['DISCONNECT', 'CONNECT']
+
+const CommandSlaCard = ({ entry }) => {
+  const Icon = COMMAND_SLA_ICON[entry.command_type] ?? Activity
+  const color = slaColor(entry.sla_pct)
+  const pctLabel = entry.sla_pct == null ? '—' : `${entry.sla_pct.toFixed(2)}%`
+  return (
+    <div className="metric-card">
+      <div className="flex items-start justify-between">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: `${color}20` }}
+        >
+          <Icon size={18} style={{ color }} />
+        </div>
+        <span style={{ fontSize: 11, color }}>
+          {entry.label} · {entry.target_hours}h
+        </span>
+      </div>
+      <div className="mt-3">
+        <div className="text-white font-black" style={{ fontSize: 28 }}>{pctLabel}</div>
+        <div className="text-white/50 font-medium mt-0.5" style={{ fontSize: 13 }}>
+          {entry.within_sla.toLocaleString()} / {entry.issued.toLocaleString()} within SLA
+        </div>
+        <div style={{ color, fontSize: 11, marginTop: 4 }}>
+          {entry.breached.toLocaleString()} breached · {entry.failed.toLocaleString()} failed · {entry.pending.toLocaleString()} pending
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const CommandSlaSection = ({ data, loading, error, onRetry }) => {
+  const items = (data?.commands ?? [])
+  const ordered = COMMAND_SLA_ORDER
+    .map((t) => items.find((c) => c.command_type === t))
+    .filter(Boolean)
+
+  const isMock = data?.sources?.commands === 'mock'
+
+  return (
+    <div data-testid="dashboard-command-sla-row">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-white font-bold" style={{ fontSize: 16 }}>
+          Reconnection / Disconnection SLA — Month to Date
+        </h2>
+        {isMock && (
+          <span className="text-white/40 text-xs" title="Mocked pending command_log integration">
+            sample data
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {Array.from({ length: 2 }).map((_, i) => <SkeletonMetricCard key={i} />)}
+        </div>
+      ) : error ? (
+        <ErrorBanner message={`Command SLA: ${error}`} onRetry={onRetry} />
+      ) : ordered.length === 0 ? (
+        <div className="glass-card p-6 text-center text-white/50">
+          No command SLA data available for this month yet.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {ordered.map((c) => (
+            <CommandSlaCard key={c.command_type} entry={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { liveAlarms } = useOutletContext()
+  const navigate = useNavigate()
   // Spec 018 W4.T11 — saved dashboard layouts. On mount we fetch the user's
   // layouts and pick the default (first-is-default in list ordering) so its
   // name is shown alongside a "Manage layouts" button. Widget positions /
@@ -256,6 +353,9 @@ export default function Dashboard() {
   const [sla, setSla] = useState(null)
   const [slaLoading, setSlaLoading] = useState(true)
   const [slaError, setSlaError] = useState(null)
+  const [cmdSla, setCmdSla] = useState(null)
+  const [cmdSlaLoading, setCmdSlaLoading] = useState(true)
+  const [cmdSlaError, setCmdSlaError] = useState(null)
 
   const s = summary
   const hasAnyKpi = s != null
@@ -265,7 +365,7 @@ export default function Dashboard() {
     setDerError(null)
     derAPI.list()
       .then(({ data }) => setDerAssets(data))
-      .catch((err) => setDerError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .catch((err) => setDerError(formatApiError(err)))
       .finally(() => setDerLoading(false))
   }
 
@@ -274,8 +374,17 @@ export default function Dashboard() {
     setSlaError(null)
     slaAPI.kpis()
       .then(({ data }) => setSla(data))
-      .catch((err) => setSlaError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .catch((err) => setSlaError(formatApiError(err)))
       .finally(() => setSlaLoading(false))
+  }
+
+  const loadCmdSla = () => {
+    setCmdSlaLoading(true)
+    setCmdSlaError(null)
+    slaAPI.connectDisconnect()
+      .then(({ data }) => setCmdSla(data))
+      .catch((err) => setCmdSlaError(formatApiError(err)))
+      .finally(() => setCmdSlaLoading(false))
   }
 
   const loadSummary = () => {
@@ -286,7 +395,7 @@ export default function Dashboard() {
         setSummary(data)
         setLastRefresh(new Date().toISOString())
       })
-      .catch((err) => setSummaryError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .catch((err) => setSummaryError(formatApiError(err)))
       .finally(() => setSummaryLoading(false))
   }
 
@@ -303,7 +412,7 @@ export default function Dashboard() {
           }))
         )
       })
-      .catch((err) => setEnergyError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .catch((err) => setEnergyError(formatApiError(err)))
       .finally(() => setEnergyLoading(false))
   }
 
@@ -312,7 +421,7 @@ export default function Dashboard() {
     setAlarmsError(null)
     mdmsDashboardAPI.alarms({ hours: 720, limit: 25 })
       .then(({ data }) => setMdmsAlarms(data?.items || []))
-      .catch((err) => setAlarmsError(err?.response?.data?.detail ?? err?.message ?? 'Unavailable'))
+      .catch((err) => setAlarmsError(formatApiError(err)))
       .finally(() => setAlarmsLoading(false))
   }
 
@@ -321,6 +430,7 @@ export default function Dashboard() {
     loadDER()
     loadEnergy()
     loadSla()
+    loadCmdSla()
     loadMdmsAlarms()
   }, [])
 
@@ -329,6 +439,7 @@ export default function Dashboard() {
     loadDER()
     loadEnergy()
     loadSla()
+    loadCmdSla()
     loadMdmsAlarms()
   }
 
@@ -438,6 +549,15 @@ export default function Dashboard() {
         onRetry={loadSla}
       />
 
+      {/* Reconnection / Disconnection SLA — month-to-date. Mocked until
+          command_log confirmation aggregates are wired up. */}
+      <CommandSlaSection
+        data={cmdSla}
+        loading={cmdSlaLoading}
+        error={cmdSlaError}
+        onRetry={loadCmdSla}
+      />
+
       {/* Gauges + sparkline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Comm rate gauge */}
@@ -510,7 +630,19 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* PV */}
-            <div className="glass-card p-5">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(pvAsset ? `/der/pv/${pvAsset.id}` : '/der/pv')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  navigate(pvAsset ? `/der/pv/${pvAsset.id}` : '/der/pv')
+                }
+              }}
+              className="glass-card p-5 cursor-pointer hover:border-white/30 transition-colors"
+              data-testid="der-card-pv"
+            >
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.2)' }}>
                   <Zap size={14} className="text-status-medium" />
@@ -542,7 +674,19 @@ export default function Dashboard() {
             </div>
 
             {/* BESS */}
-            <div className="glass-card p-5">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(bessAsset ? `/der/bess/${bessAsset.id}` : '/der/bess')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  navigate(bessAsset ? `/der/bess/${bessAsset.id}` : '/der/bess')
+                }
+              }}
+              className="glass-card p-5 cursor-pointer hover:border-white/30 transition-colors"
+              data-testid="der-card-bess"
+            >
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(56,204,242,0.2)' }}>
                   <Battery size={14} className="text-sky-blue" />
@@ -561,7 +705,10 @@ export default function Dashboard() {
                 <div>
                   <div className="text-white/40" style={{ fontSize: 11 }}>SoC</div>
                   <div className="text-sky-blue font-bold" style={{ fontSize: 18 }}>
-                    {bessAsset?.state_of_charge ?? 0}<span className="text-white/40 font-normal text-sm">%</span>
+                    {bessAsset?.state_of_charge != null
+                      ? Number(bessAsset.state_of_charge).toFixed(2)
+                      : '0.00'}
+                    <span className="text-white/40 font-normal text-sm">%</span>
                   </div>
                 </div>
                 <div>
@@ -574,7 +721,19 @@ export default function Dashboard() {
             </div>
 
             {/* EV Charger */}
-            <div className="glass-card p-5">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(evAsset ? `/der/ev/${evAsset.id}` : '/der/ev')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  navigate(evAsset ? `/der/ev/${evAsset.id}` : '/der/ev')
+                }
+              }}
+              className="glass-card p-5 cursor-pointer hover:border-white/30 transition-colors"
+              data-testid="der-card-ev"
+            >
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(2,201,168,0.2)' }}>
                   <Car size={14} className="text-energy-green" />
