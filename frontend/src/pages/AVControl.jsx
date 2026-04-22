@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Monitor, Thermometer, Mic, MicOff, Video, VideoOff,
   Phone, PhoneOff, Share2, Calendar, Clock, Sliders, Lightbulb,
+  Flame, Waves, AlertTriangle, CheckCircle, RefreshCw,
 } from 'lucide-react'
+import { sensorsAPI } from '@/services/api'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SOURCES = [
@@ -54,6 +56,102 @@ function SectionHeader(props) {
         <HeaderIcon size={16} style={{ color }} />
       </div>
       <span style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>{title}</span>
+    </div>
+  )
+}
+
+function SensorMonitoringPanel({ sensorType, title, Icon, color }) {
+  // Live roll-up of every transformer's {sensorType} sensor. Shows
+  // normal/warning/critical counts + the first few critical devices.
+  const [sensors, setSensors] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+
+  const load = useCallback(() => {
+    setLoading(true); setErr(null)
+    sensorsAPI.list({ sensor_type: sensorType })
+      .then(({ data }) => setSensors(data || []))
+      .catch((e) => setErr(e?.response?.data?.detail || 'Failed to load sensors'))
+      .finally(() => setLoading(false))
+  }, [sensorType])
+
+  useEffect(() => {
+    load()
+    const h = setInterval(load, 30_000)
+    return () => clearInterval(h)
+  }, [load])
+
+  const total = sensors.length
+  const warn = sensors.filter(s => (s.status || '').toLowerCase() === 'warning').length
+  const crit = sensors.filter(s => (s.status || '').toLowerCase() === 'critical').length
+  const normal = total - warn - crit
+  const statusColor = crit > 0 ? '#E94B4B' : warn > 0 ? '#F59E0B' : '#02C9A8'
+
+  return (
+    <div className="glass-card" style={{ padding: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            background: `${color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Icon size={16} style={{ color }} />
+          </div>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>{title}</span>
+        </div>
+        <button onClick={load} title="Refresh" style={{
+          background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 4,
+        }}>
+          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {err ? (
+        <div style={{ fontSize: 12, color: '#E94B4B' }}>{err}</div>
+      ) : (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 12, marginBottom: 14, padding: '14px 0',
+            background: `${statusColor}14`, borderRadius: 10, border: `1px solid ${statusColor}33`,
+          }}>
+            {crit > 0 ? <AlertTriangle size={20} style={{ color: statusColor }} />
+              : <CheckCircle size={20} style={{ color: statusColor }} />}
+            <span style={{ fontSize: 20, fontWeight: 900, color: '#fff' }}>
+              {crit > 0 ? `${crit} CRITICAL` : warn > 0 ? `${warn} WARNING` : 'ALL CLEAR'}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
+            <div style={{ background: 'rgba(2,201,168,0.08)', border: '1px solid rgba(2,201,168,0.25)', borderRadius: 8, padding: '10px 6px', textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: 700, textTransform: 'uppercase' }}>Normal</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#02C9A8', marginTop: 2 }}>{normal}</div>
+            </div>
+            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '10px 6px', textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: 700, textTransform: 'uppercase' }}>Warning</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#F59E0B', marginTop: 2 }}>{warn}</div>
+            </div>
+            <div style={{ background: 'rgba(233,75,75,0.08)', border: '1px solid rgba(233,75,75,0.25)', borderRadius: 8, padding: '10px 6px', textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: 700, textTransform: 'uppercase' }}>Critical</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#E94B4B', marginTop: 2 }}>{crit}</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+            {total} sensor{total !== 1 ? 's' : ''} across the fleet · last refresh just now
+          </div>
+          {crit > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ fontSize: 10, color: '#E94B4B', fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 }}>
+                Active alarms
+              </div>
+              {sensors.filter(s => (s.status || '').toLowerCase() === 'critical').slice(0, 3).map(s => (
+                <div key={s.id} style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}>
+                  · {s.name || `Sensor ${s.id}`}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -177,17 +275,23 @@ export default function AVControl() {
     <div className="animate-slide-up" style={{ padding: 24, minHeight: '100vh', background: '#0A0F1E' }}>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: 0 }}>A/V Control Room</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: 0 }}>Control Room</h1>
         <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, margin: '4px 0 0' }}>
-          Video wall routing · Environmental controls · Teams integration
+          Environmental sensor monitoring · HVAC · Teams integration
         </p>
       </div>
 
       {/* 3-column layout */}
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
 
-        {/* ── LEFT: Video Wall ── */}
+        {/* ── LEFT: Smoke + Water immersion monitoring (replaced Video Wall) ── */}
         <div style={col}>
+          <SensorMonitoringPanel sensorType="smoke" title="Smoke Detector" Icon={Flame} color="#E94B4B" />
+          <SensorMonitoringPanel sensorType="water_immersion" title="Water Immersion" Icon={Waves} color="#56CCF2" />
+        </div>
+
+        {/* Video Wall retained as a hidden placeholder for legacy code below */}
+        <div style={{ display: 'none' }}>
           <div className="glass-card" style={{ padding: 20 }}>
             <SectionHeader icon={Monitor} title="Video Wall Control" />
 

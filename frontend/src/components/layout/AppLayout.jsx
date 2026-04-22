@@ -18,7 +18,7 @@ const TITLES = {
   '/reports':      'Reports & Audit',
   '/reports/energy-audit':        'Energy Audit Master',
   '/reports/reliability-indices': 'Reliability Indices',
-  '/av-control':   'Control Room A/V',
+  '/av-control':   'Control Room',
   '/app-builder':  'App Builder',
   '/showcase':     'SMOC Showcase',
   '/audit':        'Audit Log',

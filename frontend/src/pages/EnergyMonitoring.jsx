@@ -631,7 +631,6 @@ const TABS = [
   { id: 'overview',     label: 'Energy Overview',      icon: Activity },
   { id: 'consumption',  label: 'Consumption Analysis', icon: BarChart2 },
   { id: 'savings',      label: 'Savings Analysis',     icon: DollarSign },
-  { id: 'monitoring',   label: 'Data Monitoring',      icon: Database },
 ]
 
 export default function EnergyMonitoring() {

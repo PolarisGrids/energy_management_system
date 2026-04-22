@@ -147,11 +147,15 @@ function OverviewTab({ assets, onCommand, cmdLoading }) {
   const evAssets    = assets.filter(a => a.asset_type === 'ev_charger')
   const mgAssets    = assets.filter(a => a.asset_type === 'microgrid')
 
+  // Microgrid card suppressed when the fleet has none configured — it used
+  // to render a dimmed 'No Microgrid asset' tile that confused operators.
   const groups = [
     { key: 'pv',        label: 'PV Solar',   icon: Sun,      color: '#F59E0B', items: pvAssets,   route: '/der/pv' },
     { key: 'bess',      label: 'BESS',        icon: Battery,  color: '#56CCF2', items: bessAssets, route: '/der/bess' },
     { key: 'ev_charger',label: 'EV Charging', icon: Car,      color: '#02C9A8', items: evAssets,   route: '/der/ev' },
-    { key: 'microgrid', label: 'Microgrid',   icon: GitMerge, color: '#ABC7FF', items: mgAssets,   route: null },
+    ...(mgAssets.length > 0
+      ? [{ key: 'microgrid', label: 'Microgrid', icon: GitMerge, color: '#ABC7FF', items: mgAssets, route: null }]
+      : []),
   ]
 
   return (
