@@ -53,6 +53,8 @@ import SolarOvervoltageRunner from '@/pages/SolarOvervoltageRunner'
 import EvFastChargingRunner from '@/pages/EvFastChargingRunner'
 // Spec 018 W4.T14 — Data Accuracy console.
 import DataAccuracy from '@/pages/DataAccuracy'
+// SMOC-FUNC-012 — System Management registry + performance tabs.
+import SystemManagement from '@/pages/SystemManagement'
 
 // Backwards-compatible alias used by legacy code paths.
 function PrivateRoute({ children }) {
@@ -114,6 +116,7 @@ export default function App() {
             <Route path="ntl"                            element={guard(P_NTL_READ,           <NTL />)} />
             <Route path="theft"                          element={guard(P_NTL_READ,           <TheftAnalysis />)} />
             <Route path="data-accuracy"                  element={guard(P_DATA_ACCURACY_READ, <DataAccuracy />)} />
+            <Route path="system"                         element={guard(P_DASHBOARD_READ,     <SystemManagement />)} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

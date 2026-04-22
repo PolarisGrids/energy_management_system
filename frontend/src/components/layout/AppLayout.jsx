@@ -23,6 +23,7 @@ const TITLES = {
   '/app-builder':  'App Builder',
   '/showcase':     'SMOC Showcase',
   '/audit':        'Audit Log',
+  '/system':       'System Management',
 }
 
 export default function AppLayout() {

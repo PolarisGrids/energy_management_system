@@ -45,6 +45,7 @@ const NAV = [
   },
   { label: 'Theft Analysis',    icon: ShieldAlert,      path: '/theft' },
   { label: 'Data Accuracy',     icon: ShieldCheck,      path: '/data-accuracy' },
+  { label: 'System Management', icon: Settings,         path: '/system' },
   { label: 'Simulations',       icon: Clapperboard,     path: '/simulation' },
   { label: 'Reports',           icon: BarChart2,        path: '/reports' },
   { label: 'Control Room',      icon: Layers,           path: '/av-control' },

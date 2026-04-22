@@ -122,6 +122,7 @@ export const ROUTE_PERMISSIONS = {
   '/ntl':             P_NTL_READ,
   '/gis':             P_DASHBOARD_READ,
   '/data-accuracy':   P_DATA_ACCURACY_READ,
+  '/system':          P_DASHBOARD_READ,
   '/admin':           P_ADMIN_ALL,
 }
 
