@@ -418,7 +418,14 @@ export default function Dashboard() {
     setAlarmsLoading(true)
     setAlarmsError(null)
     mdmsDashboardAPI.alarms({ hours: 720, limit: 25 })
-      .then(({ data }) => setMdmsAlarms(data?.items || []))
+      .then(({ data }) => {
+        // Drop rows without a meter identifier — these are transformer-level
+        // events that render as a blank 'Meter' column and confuse operators.
+        const items = (data?.items || []).filter(
+          (a) => (a.meter_id ?? '').toString().trim() !== ''
+        )
+        setMdmsAlarms(items)
+      })
       .catch((err) => setAlarmsError(formatApiError(err)))
       .finally(() => setAlarmsLoading(false))
   }
@@ -824,11 +831,14 @@ export default function Dashboard() {
                   <tr><th>Severity</th><th>Type</th><th>Meter</th><th>Description</th><th>Time</th></tr>
                 </thead>
                 <tbody>
-                  {liveAlarms.slice(0, 10).map((a, i) => (
+                  {liveAlarms
+                    .filter((a) => (a.meter_serial ?? '').toString().trim() !== '')
+                    .slice(0, 10)
+                    .map((a, i) => (
                     <tr key={i}>
                       <td><span className={`badge-${a.severity}`}>{a.severity}</span></td>
                       <td className="text-accent-blue">{a.alarm_type?.replace(/_/g, ' ')}</td>
-                      <td className="text-white/60 font-mono text-xs">{a.meter_serial ?? '—'}</td>
+                      <td className="text-white/60 font-mono text-xs">{a.meter_serial}</td>
                       <td className="text-white/80">{a.title}</td>
                       <td className="text-white/40 text-xs">{new Date(a.triggered_at).toLocaleTimeString()}</td>
                     </tr>
@@ -848,14 +858,17 @@ export default function Dashboard() {
                 <tr><th>Severity</th><th>Meter</th><th>Events</th><th>Time</th></tr>
               </thead>
               <tbody>
-                {mdmsAlarms.slice(0, 15).map((a, i) => (
+                {mdmsAlarms
+                  .filter((a) => (a.meter_id ?? '').toString().trim() !== '')
+                  .slice(0, 15)
+                  .map((a, i) => (
                   <tr key={i}>
                     <td>
                       <span className={a.is_tamper ? 'badge-critical' : 'badge-medium'}>
                         {a.is_tamper ? 'tamper' : 'info'}
                       </span>
                     </td>
-                    <td className="text-white/60 font-mono text-xs">{a.meter_id || '—'}</td>
+                    <td className="text-white/60 font-mono text-xs">{a.meter_id}</td>
                     <td className="text-white/80 text-xs">
                       {(a.messages || []).slice(0, 2).join(' · ')}
                       {a.messages?.length > 2 && <span className="text-white/40"> +{a.messages.length - 2} more</span>}

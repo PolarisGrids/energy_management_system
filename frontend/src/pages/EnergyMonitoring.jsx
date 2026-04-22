@@ -107,14 +107,31 @@ const SectionHeader = ({ title, sub }) => (
 
 // ─── Tab 1: Energy Overview ───────────────────────────────────────────────────
 
-function EnergyOverviewTab({ summary, loading, loadProfile, dailyReport, feederBreakdown }) {
-  const s = summary
+function EnergyOverviewTab({ summary, consumptionSummary, loading, loadProfile, dailyReport, feederBreakdown }) {
+  // Roster counts from metersAPI.summary (total_meters, comm_success_rate).
+  const meterSummary = summary
+  // Import/export/PF from /consumption/summary envelope { ok, data: {...} }.
+  const energy = consumptionSummary?.data ?? null
+  const s = energy
+    ? {
+        ...meterSummary,
+        total_import_kwh:  energy.import_kwh,
+        total_export_kwh:  energy.export_kwh,
+        net_kwh:           energy.net_kwh,
+        avg_power_factor:  energy.pf_avg,
+        peak_kw:           energy.peak_kw,
+      }
+    : meterSummary
   const hours = loadProfile?.hours || []
   const residential = loadProfile?.residential || []
   const commercial = loadProfile?.commercial || []
   const prepaid = loadProfile?.prepaid || []
   const totalLoad = loadProfile?.total || []
-  const feeders = Array.isArray(feederBreakdown?.data) ? feederBreakdown.data : []
+  // /consumption/feeder-breakdown returns { data: { date, rows: [...] } }.
+  const feederData = feederBreakdown?.data ?? null
+  const feeders = Array.isArray(feederData?.rows)
+    ? feederData.rows
+    : (Array.isArray(feederData) ? feederData : [])
 
   // Stacked area: 24h load profile by meter type
   const stackedAreaOption = {
@@ -310,9 +327,15 @@ function ConsumptionAnalysisTab({
   device, setDevice,
 }) {
   // Monthly consumption — live from /api/v1/consumption/monthly.
-  const monthlyRows = Array.isArray(monthly?.data) ? monthly.data : []
+  // Envelope shape: { ok, data: { months, rows: [{month, import_kwh, ...}] } }
+  // The array is on data.rows, not data itself — prior code read the wrong
+  // field and rendered an empty chart despite 200s.
+  const monthlyData = monthly?.data ?? null
+  const monthlyRows = Array.isArray(monthlyData?.rows)
+    ? monthlyData.rows
+    : (Array.isArray(monthlyData) ? monthlyData : [])
   const monthlyLabels = monthlyRows.map(r => r.label || r.month)
-  const monthlyValues = monthlyRows.map(r => r.kwh ?? r.value ?? 0)
+  const monthlyValues = monthlyRows.map(r => r.import_kwh ?? r.kwh ?? r.value ?? 0)
 
   const monthlyBarOption = monthlyRows.length ? {
     backgroundColor: 'transparent',
@@ -335,7 +358,11 @@ function ConsumptionAnalysisTab({
   } : null
 
   // Pie: consumption by class — live from /api/v1/consumption/by-class.
-  const classRows = Array.isArray(byClass?.data) ? byClass.data : []
+  // Shape: { ok, data: { period, date, rows: [{tariff_class, kwh, pct}] } }
+  const classData = byClass?.data ?? null
+  const classRows = Array.isArray(classData?.rows)
+    ? classData.rows
+    : (Array.isArray(classData) ? classData : [])
   const CLASS_COLORS = { Residential: '#02C9A8', Commercial: '#56CCF2', Industrial: '#F59E0B', Prepaid: '#ABC7FF', Municipal: '#F97316' }
   const pieOption = classRows.length ? {
     backgroundColor: 'transparent',
@@ -347,11 +374,14 @@ function ConsumptionAnalysisTab({
       center: ['38%', '50%'],
       itemStyle: { borderColor: '#0A0F1E', borderWidth: 2 },
       label: { show: false },
-      data: classRows.map((c) => ({
-        name: c.name || c.class,
-        value: c.value ?? c.pct ?? c.kwh ?? 0,
-        itemStyle: { color: CLASS_COLORS[c.name || c.class] || '#ABC7FF' },
-      })),
+      data: classRows.map((c) => {
+        const name = c.name || c.class || c.tariff_class
+        return {
+          name,
+          value: c.kwh ?? c.value ?? c.pct ?? 0,
+          itemStyle: { color: CLASS_COLORS[name] || '#ABC7FF' },
+        }
+      }),
     }],
   } : null
 
@@ -648,6 +678,9 @@ export default function EnergyMonitoring() {
   const [feederBreakdown, setFeederBreakdown] = useState(null)
   const [monthly,         setMonthly]         = useState(null)
   const [byClass,         setByClass]         = useState(null)
+  // Overview KPIs pull import/export/PF from the consumption summary envelope,
+  // not meters/summary — that only has meter counts.
+  const [consumptionSummary, setConsumptionSummary] = useState(null)
 
   // Filters (all backed by CIS hierarchy — never hardcoded).
   const [dateRange, setDateRange]     = useState(defaultRange('7d'))
@@ -687,14 +720,16 @@ export default function EnergyMonitoring() {
       feeder: feederFilter || undefined,
       tariff_class: classFilter || undefined,
     }
-    const [fbRes, mRes, cRes] = await Promise.allSettled([
+    const [fbRes, mRes, cRes, sRes] = await Promise.allSettled([
       consumptionAPI.feederBreakdown(params),
       consumptionAPI.monthly({ months: 6, ...params }),
       consumptionAPI.byClass({ period: 'month', date: today }),
+      consumptionAPI.summary({}),
     ])
     setFeederBreakdown(fbRes.status === 'fulfilled' ? fbRes.value.data : null)
     setMonthly        (mRes.status  === 'fulfilled' ? mRes.value.data  : null)
     setByClass        (cRes.status  === 'fulfilled' ? cRes.value.data  : null)
+    setConsumptionSummary(sRes.status === 'fulfilled' ? sRes.value.data : null)
   }, [feederFilter, classFilter])
 
   // Filter option lookups (never hardcoded).
@@ -795,6 +830,7 @@ export default function EnergyMonitoring() {
         {activeTab === 'overview'    && (
           <EnergyOverviewTab
             summary={summary}
+            consumptionSummary={consumptionSummary}
             loading={loading}
             loadProfile={loadProfile}
             dailyReport={dailyReport}
