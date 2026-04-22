@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Bell, Zap, Activity, BarChart2,
-  Settings, LogOut, Radio, Cpu, FileText, Clapperboard,
+  Settings, LogOut, FileText, Clapperboard,
   Building2, ChevronLeft, ChevronRight, Layers, BotMessageSquare,
   Thermometer, ShieldCheck, AlertOctagon,
   ShieldAlert, AlertTriangle, Gauge, Sun, Battery, Car, SlidersHorizontal,
@@ -43,14 +43,10 @@ const NAV = [
       { label: 'Alerts',        icon: AlertTriangle,   path: '/alerts-mgmt/alerts' },
     ],
   },
-  { label: 'HES Mirror',        icon: Radio,            path: '/hes' },
-  { label: 'MDMS Mirror',       icon: Cpu,              path: '/mdms' },
   { label: 'Theft Analysis',    icon: ShieldAlert,      path: '/theft' },
   { label: 'Data Accuracy',     icon: ShieldCheck,      path: '/data-accuracy' },
   { label: 'Simulations',       icon: Clapperboard,     path: '/simulation' },
   { label: 'Reports',           icon: BarChart2,        path: '/reports' },
-  { label: 'Energy Audit',      icon: FileText,         path: '/reports/energy-audit' },
-  { label: 'Reliability Indices', icon: Gauge,          path: '/reports/reliability-indices' },
   { label: 'Control Room',      icon: Layers,           path: '/av-control' },
   { label: 'App Builder',       icon: BotMessageSquare, path: '/app-builder' },
   { label: 'SMOC Showcase',     icon: Building2,        path: '/showcase' },

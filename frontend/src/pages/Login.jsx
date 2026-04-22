@@ -98,26 +98,6 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Demo credentials hint */}
-          <div className="mt-6 pt-5 border-t border-white/5">
-            <p className="text-white/40 text-center mb-3" style={{ fontSize: 11 }}>DEMO CREDENTIALS</p>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { role: 'Admin', u: 'admin', p: 'Admin@2026' },
-                { role: 'Supervisor', u: 'supervisor', p: 'Super@2026' },
-                { role: 'Operator', u: 'operator', p: 'Oper@2026' },
-              ].map(({ role, u, p }) => (
-                <button
-                  key={u}
-                  onClick={() => setForm({ username: u, password: p })}
-                  className="glass-card px-3 py-2 text-center hover:border-energy-green/30 transition-colors cursor-pointer"
-                >
-                  <div className="text-sky-blue font-bold" style={{ fontSize: 10 }}>{role}</div>
-                  <div className="text-white/50 font-mono mt-0.5" style={{ fontSize: 10 }}>{u}</div>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

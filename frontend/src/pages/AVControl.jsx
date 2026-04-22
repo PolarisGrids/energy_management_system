@@ -16,7 +16,7 @@ const SHARE_SOURCES = ['Desktop', 'LV Dashboard', 'GIS Map', 'Simulation']
 
 const MEETINGS = [
   { id: 1, title: 'AMI Programme Sync', time: '09:00 – 09:30', organizer: 'T. Dlamini' },
-  { id: 2, title: 'Eskom Demo Rehearsal', time: '11:00 – 12:00', organizer: 'A. van der Merwe' },
+  { id: 2, title: 'Eskom Rehearsal', time: '11:00 – 12:00', organizer: 'A. van der Merwe' },
   { id: 3, title: 'DER Integration Review', time: '14:30 – 15:00', organizer: 'P. Nkosi' },
 ]
 

@@ -183,7 +183,7 @@ export default function Reconciler() {
       {/* Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard icon={ShieldCheck} label="IEC Compliance" value={`${overallPct}%`} sub={`${totalCompliant} compliant / ${totalAssessed} assessed`} color={totalNonCompliant > 0 ? '#E94B4B' : '#02C9A8'} />
-        <MetricCard icon={CheckCircle} label="Demo Features" value={`${completeCount}/${totalItems}`} sub={`${projectedScore}/133 pts (${projectedPct}%)`} color={parseFloat(projectedPct) >= 85 ? '#02C9A8' : '#F5A623'} />
+        <MetricCard icon={CheckCircle} label="Features" value={`${completeCount}/${totalItems}`} sub={`${projectedScore}/133 pts (${projectedPct}%)`} color={parseFloat(projectedPct) >= 85 ? '#02C9A8' : '#F5A623'} />
         <MetricCard icon={AlertTriangle} label="Non-Compliant" value={totalNonCompliant} sub={`${totalPartial} partial findings`} color={totalNonCompliant > 0 ? '#E94B4B' : '#02C9A8'} />
         <MetricCard icon={FileText} label="Standards Indexed" value={matrix.length} sub="IEC / STS documents" color="#3C63FF" />
       </div>
@@ -206,7 +206,7 @@ export default function Reconciler() {
             <ComplianceMatrix matrix={matrix} />
           </div>
           <div className="rounded-xl p-6" style={{ background: 'linear-gradient(135deg, #0A1A4A 0%, #0D1F5C 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><CheckCircle size={18} style={{ color: '#02C9A8' }} /> Demo Readiness</h3>
+            <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><CheckCircle size={18} style={{ color: '#02C9A8' }} /> Readiness</h3>
             <FeatureStatusChart items={featureItems} />
             <div className="text-center mt-2">
               <span className="text-2xl font-bold" style={{ color: parseFloat(projectedPct) >= 85 ? '#02C9A8' : '#F5A623' }}>{projectedPct}%</span>
@@ -225,7 +225,7 @@ export default function Reconciler() {
 
       {activeTab === 'features' && (
         <div className="rounded-xl p-6" style={{ background: 'linear-gradient(135deg, #0A1A4A 0%, #0D1F5C 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <h3 className="text-white font-semibold mb-4">27 SMOC Demo Items — Feature Completion</h3>
+          <h3 className="text-white font-semibold mb-4">27 SMOC Items — Feature Completion</h3>
           <FeatureList items={featureItems} />
         </div>
       )}

@@ -88,7 +88,7 @@ export default function SimulationPage() {
     <div className="flex gap-4 h-full animate-slide-up">
       {/* Scenario list */}
       <div className="flex flex-col gap-3 w-72 shrink-0">
-        <h2 className="text-white font-bold" style={{ fontSize: 16 }}>Demo Scenarios</h2>
+        <h2 className="text-white font-bold" style={{ fontSize: 16 }}>Scenarios</h2>
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-20 rounded-card" />)
         ) : scenarios.map(s => (
@@ -321,7 +321,7 @@ export default function SimulationPage() {
             <div className="text-center text-white/40">
               <Zap size={40} className="mx-auto mb-3 opacity-30" />
               <div className="font-bold">Select a scenario to begin</div>
-              <div className="text-sm mt-1">5 demo scenarios available (REQ-21 to REQ-25)</div>
+              <div className="text-sm mt-1">5 scenarios available (REQ-21 to REQ-25)</div>
             </div>
           </div>
         )}

@@ -63,7 +63,7 @@ export default function AlertManagement() {
   useEffect(() => { loadHeader() }, [loadHeader])
 
   const seedDefaults = async () => {
-    if (!window.confirm('Create the default feeder-meters + critical-customers groups and tag a handful of demo consumers?')) return
+    if (!window.confirm('Create the default feeder-meters + critical-customers groups and tag a handful of consumers?')) return
     setSeeding(true)
     try {
       const { data } = await alertMgmtAPI.seedDefaults()

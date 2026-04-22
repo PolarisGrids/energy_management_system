@@ -575,13 +575,6 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
-        <div className="mt-4 p-3 rounded-lg flex items-center gap-3"
-          style={{ background: 'rgba(2,201,168,0.06)', border: '1px solid rgba(2,201,168,0.15)' }}>
-          <CheckCircle size={15} style={{ color: '#02C9A8' }} />
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
-            <strong style={{ color: '#02C9A8' }}>98.2% accuracy</strong> across the full HES → MDMS → CC&B data chain — exceeds Eskom tender REQ-14 threshold.
-          </span>
-        </div>
       </div>
 
       {/* Metrology SLA — month-to-date, sourced from MDMS validation_rules. */}
