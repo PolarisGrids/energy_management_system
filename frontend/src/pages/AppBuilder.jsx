@@ -90,12 +90,28 @@ async function fetchSourceData(source) {
 }
 
 // Compute a scalar metric value from an API payload based on source id.
+// Metric keys come from the backend widget-source catalog, but actual API
+// field names don't always match those keys — each branch below is the
+// translation layer between catalog key and response field.
 function extractMetric(apiResponse, metricKey, sourceId) {
   if (apiResponse == null) return null
   const arr = Array.isArray(apiResponse) ? apiResponse : null
   switch (sourceId) {
-    case 'meters_summary':
-      return apiResponse[metricKey]
+    case 'meters_summary': {
+      // /meters/summary returns {total_meters, online_meters, offline_meters,
+      // disconnected_meters, comm_success_rate, ...}. Catalog exposes shorter
+      // keys ('total', 'online', ...) — map both forms so existing saved
+      // bindings keep working.
+      const map = {
+        total: apiResponse.total_meters,
+        online: apiResponse.online_meters,
+        offline: apiResponse.offline_meters,
+        disconnected: apiResponse.disconnected_meters,
+        tamper: apiResponse.tamper_meters,
+        comm_rate: apiResponse.comm_success_rate,
+      }
+      return map[metricKey] ?? apiResponse[metricKey] ?? null
+    }
     case 'alarms_active': {
       if (!arr) return null
       if (metricKey === 'count_critical') return arr.filter(a => (a.severity || '').toLowerCase() === 'critical').length
@@ -112,41 +128,68 @@ function extractMetric(apiResponse, metricKey, sourceId) {
         return bess.reduce((s, a) => s + (+a.state_of_charge || 0), 0) / bess.length
       }
       if (metricKey === 'ev_sessions')      return arr.filter(a => a.asset_type === 'ev_charger').reduce((s, a) => s + (+a.active_sessions || 0), 0)
-      if (metricKey === 'total_capacity_kw') return arr.reduce((s, a) => s + (+a.capacity_kw || +a.current_output_kw || 0), 0)
+      if (metricKey === 'total_capacity_kw') return arr.reduce((s, a) => s + (+a.rated_capacity_kw || +a.capacity_kw || +a.current_output_kw || 0), 0)
       return arr.length
     }
     case 'feeder_loading': {
-      if (!arr) return null
+      // /meters/feeders returns either an array or { feeders: [...] }.
+      const feeders = arr || apiResponse?.feeders || []
       if (metricKey === 'loading_pct') {
-        if (!arr.length) return 0
-        return arr.reduce((s, f) => s + (+f.loading_pct || 0), 0) / arr.length
+        if (!feeders.length) return 0
+        return feeders.reduce((s, f) => s + (+f.loading_pct || +f.loading_percent || 0), 0) / feeders.length
       }
       return null
     }
     case 'consumption_summary': {
-      const d = apiResponse.data || apiResponse
-      return d ? d[metricKey] : null
+      // /consumption/summary envelope shape: { ok, data: {import_kwh, export_kwh, ...} }.
+      const d = apiResponse?.data ?? apiResponse ?? {}
+      const map = {
+        total_kwh:     d.import_kwh ?? d.total_kwh,
+        avg_daily_kwh: d.avg_daily_kwh ?? (d.import_kwh && d.from && d.to
+          ? d.import_kwh / Math.max(1, Math.ceil((new Date(d.to) - new Date(d.from)) / 86400000))
+          : null),
+        peak_hour_kw:  d.peak_kw ?? d.peak_hour_kw,
+        net_kwh:       d.net_kwh,
+      }
+      return map[metricKey] ?? d[metricKey] ?? null
     }
     case 'transformer_sensors': {
+      // /der/transformers/sensors returns an array of sensor rows. Legacy
+      // binding keys end with '_c' / '_mms' — translate to the sensor's
+      // actual `value` field, filtered by sensor_type.
       if (!arr) return null
-      const vals = arr.map(s => +s[metricKey]).filter(Number.isFinite)
-      if (!vals.length) return null
+      const type = metricKey.replace(/_c$/, '').replace(/_mms$/, '').replace(/_temp_c$/, '_temp')
+      const rows = arr.filter(s => (s.sensor_type || '').toLowerCase() === type.toLowerCase())
+      const vals = rows.map(s => +s.value).filter(Number.isFinite)
+      if (!vals.length) {
+        // Fall back to direct key lookup for legacy shapes.
+        const direct = arr.map(s => +s[metricKey]).filter(Number.isFinite)
+        if (!direct.length) return null
+        return direct.reduce((a, b) => a + b, 0) / direct.length
+      }
       return vals.reduce((a, b) => a + b, 0) / vals.length
     }
     case 'ntl_suspects': {
-      if (!arr) return null
-      if (metricKey === 'count') return arr.length
-      if (metricKey === 'high_score') return arr.filter(s => (+s.score || 0) >= 70).length
+      // Response may be array or { suspects: [...] } or { items: [...] }.
+      const rows = arr || apiResponse?.suspects || apiResponse?.items || []
+      if (metricKey === 'count') return rows.length
+      if (metricKey === 'high_score') return rows.filter(s => (+s.score || +s.risk_score || 0) >= 70).length
       return null
     }
     case 'outages_active': {
-      if (!arr) return null
-      if (metricKey === 'count') return arr.length
-      if (metricKey === 'customers_out') return arr.reduce((s, o) => s + (+o.customers_affected || 0), 0)
+      // Response may be array or paginated { outages: [...] } / { items: [...] }.
+      const rows = arr || apiResponse?.outages || apiResponse?.items || []
+      if (metricKey === 'count') return rows.length
+      if (metricKey === 'customers_out') return rows.reduce((s, o) => s + (+o.customers_affected || +o.customer_count || 0), 0)
       return null
     }
-    case 'hierarchy_overview':
-      return apiResponse?.stats?.[metricKey] ?? null
+    case 'hierarchy_overview': {
+      const stats = apiResponse?.stats ?? {}
+      if (stats[metricKey] != null) return stats[metricKey]
+      // Legacy compatibility: some deployments expose meter_count /
+      // active_alarms directly on the response.
+      return apiResponse?.[metricKey] ?? null
+    }
     default:
       return null
   }

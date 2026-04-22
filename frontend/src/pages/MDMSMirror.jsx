@@ -4,7 +4,7 @@ import {
   Search, RefreshCw, ShieldAlert, Zap,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
-import { mdmsAPI } from '@/services/api'
+import { mdmsAPI, theftAPI } from '@/services/api'
 import { ErrorBoundary, UpstreamErrorPanel, useToast } from '@/components/ui'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -246,13 +246,22 @@ function BillingTariffs({ tariffs, error, onRetry }) {
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
-function Analytics({ ntl, error, onRetry }) {
+function Analytics({ ntl, powerQuality, theftSummary, error, onRetry }) {
   if (error) return <UpstreamErrorPanel upstream="mdms" detail={error} onRetry={onRetry} />
 
   const ntlColor = (flag) =>
     flag === 'High Risk' || flag === 'high' ? '#E94B4B' :
     flag === 'Medium' || flag === 'medium' ? '#F59E0B' :
     '#56CCF2'
+
+  const pqZones = Array.isArray(powerQuality?.zones) ? powerQuality.zones : []
+  const pqCompliant = pqZones.filter(z => z.ok).length
+  const pqBreach   = pqZones.length - pqCompliant
+  const worstZones = [...pqZones]
+    .sort((a, b) => (b.vDev ?? 0) - (a.vDev ?? 0))
+    .slice(0, 5)
+
+  const tamperTiers = theftSummary?.tiers || {}
 
   return (
     <div className="animate-slide-up" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -300,14 +309,81 @@ function Analytics({ ntl, error, onRetry }) {
         )}
       </div>
 
-      <UpstreamErrorPanel
-        upstream="mdms"
-        detail={
-          'Power-quality compliance and tamper-analytics endpoints are not yet exposed by MDMS. ' +
-          'Tracked as mdms-todos.md (power-quality MV) and mdms-reports feeder-loss view. ' +
-          'This panel will fill once those land.'
-        }
-      />
+      {/* Power-quality compliance — per-zone voltage deviation / THD / flicker. */}
+      <div className="glass-card" style={{ padding: 20 }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Zap size={16} color="#F59E0B" />
+          <span className="text-white font-semibold" style={{ fontSize: 14 }}>Power Quality Compliance</span>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#ABC7FF' }}>
+            {pqCompliant}/{pqZones.length || 0} zones compliant
+            {pqBreach > 0 && <span style={{ color: '#E94B4B', marginLeft: 8 }}>{pqBreach} breach(es)</span>}
+          </span>
+        </div>
+        {pqZones.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, padding: 16 }}>
+            Power-quality feed unavailable.
+          </div>
+        ) : (
+          <table className="data-table" style={{ width: '100%' }}>
+            <thead><tr>
+              {['Zone', 'V Deviation %', 'THD %', 'Flicker Pst', 'Status'].map(h => <th key={h}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {worstZones.map((z, i) => (
+                <tr key={i}>
+                  <td style={{ fontSize: 12, color: '#ABC7FF' }}>{z.zone}</td>
+                  <td style={{ fontSize: 12, color: (z.vDev ?? 0) > 5 ? '#E94B4B' : '#fff' }}>{z.vDev?.toFixed?.(1) ?? '—'}</td>
+                  <td style={{ fontSize: 12, color: (z.thd ?? 0) > 5 ? '#F59E0B' : '#fff' }}>{z.thd?.toFixed?.(1) ?? '—'}</td>
+                  <td style={{ fontSize: 12 }}>{z.flicker?.toFixed?.(1) ?? '—'}</td>
+                  <td>
+                    <span style={{
+                      fontSize: 10, padding: '3px 8px', borderRadius: 4, fontWeight: 700,
+                      background: z.ok ? 'rgba(2,201,168,0.12)' : 'rgba(233,75,75,0.12)',
+                      color: z.ok ? '#02C9A8' : '#E94B4B',
+                    }}>
+                      {z.ok ? 'COMPLIANT' : 'BREACH'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Tamper analytics — tier distribution from theft scorer. */}
+      <div className="glass-card" style={{ padding: 20 }}>
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldAlert size={16} color="#F97316" />
+          <span className="text-white font-semibold" style={{ fontSize: 14 }}>Tamper / Theft Analytics</span>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#ABC7FF' }}>
+            {theftSummary?.total_meters ?? 0} meters scored
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+          {[
+            { key: 'critical', label: 'Critical', color: '#E94B4B' },
+            { key: 'high',     label: 'High',     color: '#F97316' },
+            { key: 'medium',   label: 'Medium',   color: '#F59E0B' },
+            { key: 'low',      label: 'Low',      color: '#6B7280' },
+          ].map(t => (
+            <div key={t.key} style={{
+              padding: '12px 10px', textAlign: 'center', borderRadius: 8,
+              background: `${t.color}14`, border: `1px solid ${t.color}33`,
+            }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: 700, textTransform: 'uppercase' }}>{t.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: t.color, marginTop: 2 }}>
+                {tamperTiers[t.key] ?? 0}
+              </div>
+            </div>
+          ))}
+        </div>
+        {theftSummary?.as_of && (
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 12, textAlign: 'right' }}>
+            Last scored: {new Date(theftSummary.as_of).toLocaleString()}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -320,6 +396,8 @@ export default function MDMSMirror() {
   const [consumers, setConsumers] = useState([])
   const [tariffs, setTariffs] = useState([])
   const [ntl, setNtl] = useState([])
+  const [powerQuality, setPowerQuality] = useState(null)
+  const [theftSummary, setTheftSummary] = useState(null)
   const [errors, setErrors] = useState({ vee: null, consumers: null, tariffs: null, ntl: null })
   const [loading, setLoading] = useState(true)
   const toast = useToast()
@@ -344,6 +422,14 @@ export default function MDMSMirror() {
       mdmsAPI.ntlSuspects({ page: 1, page_size: 20 })
         .then((r) => setNtl(r.data?.items ?? r.data?.suspects ?? []))
         .catch((e) => { next.ntl = formatUpstreamError(e) }),
+      // Analytics tab — power quality + theft summary. Failures are
+      // non-fatal; the analytics panel degrades to an inline empty state.
+      mdmsAPI.powerQuality()
+        .then((r) => setPowerQuality(r.data))
+        .catch(() => setPowerQuality(null)),
+      theftAPI.summary()
+        .then((r) => setTheftSummary(r.data))
+        .catch(() => setTheftSummary(null)),
     ])
 
     setErrors(next)
@@ -365,7 +451,8 @@ export default function MDMSMirror() {
       <BillingTariffs tariffs={tariffs} error={errors.tariffs} onRetry={load} />
     </ErrorBoundary>,
     <ErrorBoundary title="Analytics panel crashed" onRetry={load}>
-      <Analytics ntl={ntl} error={errors.ntl} onRetry={load} />
+      <Analytics ntl={ntl} powerQuality={powerQuality} theftSummary={theftSummary}
+        error={errors.ntl} onRetry={load} />
     </ErrorBoundary>,
   ]
 

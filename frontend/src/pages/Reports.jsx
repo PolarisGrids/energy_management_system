@@ -4,7 +4,7 @@ import {
   Search, RefreshCw, TrendingUp, Zap, Calendar, PlayCircle, Clock,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
-import { reportsAPI, egsmReportsAPI, scheduledReportsAPI, devicesAPI, mdmsAPI } from '@/services/api'
+import { reportsAPI, egsmReportsAPI, scheduledReportsAPI, devicesAPI, mdmsAPI, metersAPI } from '@/services/api'
 import { DateRangePicker, defaultRange } from '@/components/ui'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -351,11 +351,18 @@ function MeterReadingReports() {
 function AuditStatements() {
   const [query, setQuery] = useState('')
   const [topConsumers, setTopConsumers] = useState([])
+  const [fleetTotal, setFleetTotal] = useState(null)
 
   useEffect(() => {
     reportsAPI.topConsumers({ limit: 10 })
       .then(res => setTopConsumers(res.data.consumers))
       .catch(console.error)
+    // Report header KPI should reflect the full fleet (matches Dashboard),
+    // not the top-10 window below. Fall back silently if the endpoint
+    // misbehaves so the page still renders.
+    metersAPI.summary()
+      .then(res => setFleetTotal(res.data?.total_meters ?? null))
+      .catch(() => setFleetTotal(null))
   }, [])
 
   const filteredInquiry = topConsumers.filter((r) => {
@@ -390,7 +397,11 @@ function AuditStatements() {
     <div className="animate-slide-up" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* Summary KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
-        <KPI icon={Zap}       label="Total Meters in Report" value={fmt(topConsumers.length)}        color="#02C9A8" />
+        <KPI icon={Zap}
+          label="Total Meters (Fleet)"
+          value={fmt(fleetTotal ?? topConsumers.length)}
+          sub={fleetTotal ? `Top ${topConsumers.length} shown below` : undefined}
+          color="#02C9A8" />
         <KPI icon={TrendingUp}label="Total Consumption (Mo)" value={`${(totalKwh/1000).toFixed(1)} MWh`} color="#56CCF2" />
         <KPI icon={BarChart2} label="Average per Meter (Mo)" value={`${avgKwh.toFixed(0)} kWh`}     color="#ABC7FF" />
       </div>
