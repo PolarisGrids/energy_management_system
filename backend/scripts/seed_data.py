@@ -1669,6 +1669,14 @@ def seed_energy_savings(db, meters):
         area = area_by_prefix.get(m.serial[:4])
         if area:
             by_area[area].append(m)
+    # Dev / prod data often uses meter serials that don't match the SA0x
+    # synthetic prefix (e.g. 'GPMPO*'). If the prefix lookup left an area
+    # empty, fall back to a round-robin distribution across the full meter
+    # roster so the savings dashboard always has appliance rows to show.
+    if meters and all(len(v) == 0 for v in by_area.values()):
+        area_names = list(by_area.keys())
+        for idx, m in enumerate(meters):
+            by_area[area_names[idx % len(area_names)]].append(m)
     customer_spec = {n: s for n, d, c, s in branch_specs}
     usage_count = 0
     for area_name, branch in branch_by_area.items():
