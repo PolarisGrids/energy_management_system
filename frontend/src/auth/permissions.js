@@ -95,6 +95,7 @@ export const ROUTE_PERMISSIONS = {
   '/der/ev':          P_DER_READ,
   '/der/bess/:assetId': P_DER_READ,
   '/der/ev/:assetId':   P_DER_READ,
+  '/der/control':     P_DER_READ,
   '/distribution':    P_DER_READ,
   '/energy':          P_ENERGY_READ,
   '/sensors':         P_SENSOR_READ,

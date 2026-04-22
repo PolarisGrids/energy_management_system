@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Radio, Cpu, FileText, Clapperboard,
   Building2, ChevronLeft, ChevronRight, Layers, BotMessageSquare,
   Thermometer, ShieldCheck, AlertOctagon,
-  ShieldAlert, AlertTriangle, Gauge, Sun, Battery, Car,
+  ShieldAlert, AlertTriangle, Gauge, Sun, Battery, Car, SlidersHorizontal,
 } from 'lucide-react'
 import useAuthStore from '@/stores/authStore'
 import { canAccessRoute } from '@/auth/permissions'
@@ -23,6 +23,7 @@ const NAV = [
       { label: 'PV Solar',      icon: Sun,              path: '/der/pv' },
       { label: 'BESS Storage',  icon: Battery,          path: '/der/bess' },
       { label: 'EV Charging',   icon: Car,              path: '/der/ev' },
+      { label: 'DER Control',   icon: SlidersHorizontal, path: '/der/control' },
     ],
   },
   { label: 'Energy Monitoring', icon: Activity,         path: '/energy' },

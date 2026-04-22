@@ -11,6 +11,7 @@ const TITLES = {
   '/gis':          'GIS Network Map',
   '/alarms':       'Alarm Console',
   '/der':          'DER Management',
+  '/der/control':  'DER Control — Demand Response',
   '/energy':       'Energy Monitoring',
   '/hes':          'HES Mirror Panel',
   '/mdms':         'MDMS Mirror Panel',

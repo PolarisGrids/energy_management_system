@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MDMS — Demand Response Control Centre</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg:        #0a0e14;
+  --bg2:       #0f1520;
+  --bg3:       #141d2b;
+  --border:    #1e2d42;
+  --border2:   #243448;
+  --text:      #c8d8ec;
+  --text2:     #7a92ab;
+  --text3:     #4a6078;
+  --accent:    #00d4ff;
+  --accent2:   #0097b8;
+  --green:     #00e676;
+  --green2:    #00a152;
+  --amber:     #ffab40;
+  --amber2:    #c77800;
+  --red:       #ff5252;
+  --red2:      #b71c1c;
+  --purple:    #ce93d8;
+  --teal:      #4db6ac;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-sans: 'IBM Plex Sans', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  min-height: 100vh;
+}
+
+/* ── Layout ── */
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap; gap: 8px;
+}
+.tb-brand { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: .12em; }
+.tb-sub   { font-size: 11px; color: var(--text2); margin-left: 10px; }
+.tb-right { display: flex; align-items: center; gap: 12px; }
+
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse-dot 1.4s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+.nav {
+  display: flex; gap: 2px; padding: 8px 20px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.nav-tab {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  padding: 6px 14px; border-radius: 4px; border: 1px solid transparent;
+  background: transparent; color: var(--text2); cursor: pointer; transition: all .15s;
+  letter-spacing: .05em;
+}
+.nav-tab:hover { color: var(--text); background: var(--bg3); }
+.nav-tab.on { color: var(--accent); background: rgba(0,212,255,.08); border-color: rgba(0,212,255,.25); }
+
+.main { padding: 16px 20px; flex: 1; }
+
+.section { display: none; }
+.section.on { display: block; }
+
+/* ── Panels ── */
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.panel-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; flex-wrap: wrap; gap: 6px;
+}
+.pt {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .1em; color: var(--text2); text-transform: uppercase;
+}
+.pt.ac { color: var(--accent); }
+.pt.gr { color: var(--green); }
+.pt.am { color: var(--amber); }
+.pt.rd { color: var(--red); }
+.pt.pu { color: var(--purple); }
+.pt.tl { color: var(--teal); }
+
+.g2 { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 10px; }
+.g3 { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 10px; }
+.g4 { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin-bottom: 10px; }
+
+/* ── KPI cards ── */
+.kpi {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; padding: 10px 12px;
+}
+.kpi-label { font-size: 10px; color: var(--text2); margin-bottom: 3px; font-family: var(--font-mono); letter-spacing:.04em; }
+.kpi-val { font-size: 22px; font-weight: 600; font-family: var(--font-mono); color: var(--text); line-height:1.1; }
+.kpi-val.ac { color: var(--accent); }
+.kpi-val.gr { color: var(--green); }
+.kpi-val.am { color: var(--amber); }
+.kpi-val.rd { color: var(--red); }
+.kpi-unit { font-size: 11px; color: var(--text2); font-weight: 400; }
+.kpi-sub  { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+/* ── Strips ── */
+.strip {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; border-radius: 4px; margin-bottom: 3px;
+  background: var(--bg3); border: 1px solid var(--border); font-size: 11px; gap:6px;
+}
+.sl { color: var(--text2); flex-shrink: 0; }
+.sv { font-weight: 500; color: var(--text); font-family: var(--font-mono); }
+.sv.gr { color: var(--green); }
+.sv.am { color: var(--amber); }
+.sv.rd { color: var(--red); }
+.sv.ac { color: var(--accent); }
+
+/* ── Badges ── */
+.badge {
+  display: inline-block; font-size: 9px; font-weight: 600;
+  padding: 2px 7px; border-radius: 3px; font-family: var(--font-mono);
+  letter-spacing: .05em; white-space: nowrap;
+}
+.b-gr  { background: rgba(0,230,118,.12); color: var(--green); border: 1px solid rgba(0,230,118,.25); }
+.b-am  { background: rgba(255,171,64,.12); color: var(--amber); border: 1px solid rgba(255,171,64,.25); }
+.b-rd  { background: rgba(255,82,82,.12);  color: var(--red);   border: 1px solid rgba(255,82,82,.25); }
+.b-ac  { background: rgba(0,212,255,.1);   color: var(--accent); border: 1px solid rgba(0,212,255,.2); }
+.b-pu  { background: rgba(206,147,216,.1); color: var(--purple); border: 1px solid rgba(206,147,216,.2); }
+.b-tl  { background: rgba(77,182,172,.1);  color: var(--teal);  border: 1px solid rgba(77,182,172,.2); }
+.b-gray{ background: rgba(122,146,171,.08);color: var(--text2); border: 1px solid var(--border); }
+
+/* ── Buttons ── */
+.btn {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  padding: 6px 14px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--border2); background: var(--bg3); color: var(--text);
+  transition: all .15s; letter-spacing: .04em;
+}
+.btn:hover { background: var(--border); color: var(--accent); }
+.btn.primary { border-color: var(--accent2); background: rgba(0,212,255,.1); color: var(--accent); }
+.btn.primary:hover { background: rgba(0,212,255,.2); }
+.btn.success { border-color: var(--green2); background: rgba(0,230,118,.08); color: var(--green); }
+.btn.success:hover { background: rgba(0,230,118,.16); }
+.btn.danger  { border-color: var(--red2); background: rgba(255,82,82,.08); color: var(--red); }
+.btn.danger:hover  { background: rgba(255,82,82,.16); }
+.btn.amber   { border-color: var(--amber2); background: rgba(255,171,64,.08); color: var(--amber); }
+.btn.amber:hover   { background: rgba(255,171,64,.16); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Alarm rows ── */
+.alarm {
+  display: flex; gap: 8px; padding: 6px 8px;
+  border-radius: 0 5px 5px 0; margin-bottom: 4px; font-size: 10px;
+  border-left: 2.5px solid;
+}
+.alarm.cr { background: rgba(255,82,82,.06); border-color: var(--red); }
+.alarm.ma { background: rgba(255,171,64,.06); border-color: var(--amber); }
+.alarm.ok { background: rgba(0,230,118,.06); border-color: var(--green); }
+.alarm.in { background: rgba(0,212,255,.06); border-color: var(--accent); }
+.alarm .ab { font-family: var(--font-mono); font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px; white-space: nowrap; margin-top:1px; flex-shrink:0; }
+.alarm.cr .ab { background: rgba(255,82,82,.15); color: var(--red); }
+.alarm.ma .ab { background: rgba(255,171,64,.15); color: var(--amber); }
+.alarm.ok .ab { background: rgba(0,230,118,.15); color: var(--green); }
+.alarm.in .ab { background: rgba(0,212,255,.12); color: var(--accent); }
+.alarm .at { color: var(--text); line-height:1.4; }
+.alarm .atime { font-size: 9px; color: var(--text3); margin-top:1px; font-family:var(--font-mono); }
+
+/* ── DR consumer cards ── */
+.dr-card {
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px;
+  background: var(--bg3); transition: border-color .2s;
+}
+.dr-card.enrolled { border-color: rgba(0,230,118,.3); }
+.dr-card.dispatched { border-color: rgba(255,171,64,.4); background: rgba(255,171,64,.04); }
+.dr-card.curtailed { border-color: rgba(255,82,82,.4); background: rgba(255,82,82,.04); }
+.dr-card.cpp { border-color: rgba(206,147,216,.35); background: rgba(206,147,216,.04); }
+
+/* ── Progress bars ── */
+.pbar-wrap { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin: 4px 0; }
+.pbar { height: 5px; border-radius: 3px; transition: width 1s ease; }
+
+/* ── Code block ── */
+.code {
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.85;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; padding: 10px 12px; color: var(--text);
+  white-space: pre; overflow-x: auto;
+}
+.kw { color: var(--accent); }
+.fn { color: var(--green); }
+.st { color: var(--amber); }
+.nu { color: var(--red); }
+.cm { color: var(--text3); font-style: italic; }
+
+/* ── Price ticker ── */
+.price-ticker {
+  display: flex; gap: 16px; padding: 8px 14px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; margin-bottom: 10px; flex-wrap: wrap; align-items: center;
+  font-family: var(--font-mono); font-size: 11px;
+}
+.ticker-item { display: flex; flex-direction: column; gap: 2px; }
+.ticker-label { font-size: 9px; color: var(--text3); letter-spacing: .06em; }
+.ticker-val   { font-weight: 600; color: var(--text); }
+.ticker-val.up   { color: var(--red); }
+.ticker-val.down { color: var(--green); }
+.ticker-val.warn { color: var(--amber); }
+
+/* ── Simulation controls ── */
+.sim-ctrl {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px;
+}
+.sim-label { font-size: 11px; color: var(--text2); font-family: var(--font-mono); }
+
+/* ── Status banner ── */
+.dr-banner {
+  padding: 10px 14px; border-radius: 5px; margin-bottom: 10px;
+  font-size: 11px; font-family: var(--font-mono); font-weight: 500;
+  border: 1px solid; letter-spacing: .04em;
+}
+.dr-banner.normal { background: rgba(0,230,118,.06); border-color: rgba(0,230,118,.2); color: var(--green); }
+.dr-banner.excess { background: rgba(255,171,64,.07); border-color: rgba(255,171,64,.25); color: var(--amber); }
+.dr-banner.deficit { background: rgba(255,82,82,.07); border-color: rgba(255,82,82,.25); color: var(--red); }
+.dr-banner.cpp    { background: rgba(206,147,216,.07); border-color: rgba(206,147,216,.25); color: var(--purple); }
+
+/* ── Field elements ── */
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.field label { font-size: 10px; color: var(--text2); font-family: var(--font-mono); letter-spacing:.04em; }
+.field input, .field select {
+  background: var(--bg3); border: 1px solid var(--border2);
+  color: var(--text); border-radius: 4px; padding: 6px 8px;
+  font-family: var(--font-mono); font-size: 11px;
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent2); }
+
+/* ── Tables ── */
+.tbl { width: 100%; border-collapse: collapse; font-size: 10px; }
+.tbl th {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing:.07em;
+  color: var(--text2); padding: 4px 8px; text-align: left;
+  border-bottom: 1px solid var(--border); text-transform: uppercase;
+}
+.tbl td { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text); }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tr:hover td { background: rgba(255,255,255,.02); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ── Status bar ── */
+.statusbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 20px; background: var(--bg2); border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 10px; color: var(--text3);
+  flex-wrap: wrap; gap: 4px;
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="tb-brand">MDMS · DR CONTROL CENTRE</span>
+    <span class="tb-sub">Meter Data Management System — Demand Response & Load Control Module v3.1</span>
+  </div>
+  <div class="tb-right">
+    <div class="live-dot"></div>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text2)">LIVE</span>
+    <span id="clock" style="font-family:var(--font-mono);font-size:11px;color:var(--text)">--:--:--</span>
+    <button class="btn primary" onclick="publishDR()">Publish DR event</button>
+  </div>
+</div>
+
+<!-- ── Nav ── -->
+<div class="nav">
+  <button class="nav-tab on" onclick="tab('overview')">Overview</button>
+  <button class="nav-tab" onclick="tab('programs')">DR programs</button>
+  <button class="nav-tab" onclick="tab('consumers')">DR consumers</button>
+  <button class="nav-tab" onclick="tab('market')">Market & pricing</button>
+  <button class="nav-tab" onclick="tab('simulation')">Simulation</button>
+  <button class="nav-tab" onclick="tab('config')">Configuration</button>
+</div>
+
+<div class="main">
+
+<!-- ═══════════════════════════════════════ OVERVIEW ═══════════════════════════════════════ -->
+<div class="section on" id="sec-overview">
+
+  <!-- Live market ticker -->
+  <div class="price-ticker" id="ticker">
+    <div class="ticker-item"><div class="ticker-label">SPOT PRICE</div><div class="ticker-val warn" id="t-spot">$187/MWh</div></div>
+    <div class="ticker-item"><div class="ticker-label">30-MIN AVG</div><div class="ticker-val" id="t-avg">$142/MWh</div></div>
+    <div class="ticker-item"><div class="ticker-label">SOLAR GEN</div><div class="ticker-val gr" id="t-solar">8.4 MW</div></div>
+    <div class="ticker-item"><div class="ticker-label">GRID DEMAND</div><div class="ticker-val" id="t-demand">7.1 MW</div></div>
+    <div class="ticker-item"><div class="ticker-label">SUPPLY/DEMAND</div><div class="ticker-val am" id="t-ratio">+18.3%</div></div>
+    <div class="ticker-item"><div class="ticker-label">DR STATUS</div><div class="ticker-val am" id="t-drstatus">EXCESS DR ACTIVE</div></div>
+    <div class="ticker-item"><div class="ticker-label">ACTIVE PROGRAMS</div><div class="ticker-val ac" id="t-progs">2</div></div>
+    <div class="ticker-item"><div class="ticker-label">ENROLLED CONSUMERS</div><div class="ticker-val ac">847</div></div>
+  </div>
+
+  <!-- DR status banner -->
+  <div class="dr-banner excess" id="dr-banner">
+    EXCESS SUPPLY EVENT ACTIVE — Solar generation 18.3% above demand threshold (±10%). DR Program: Real-time incentive pricing + EV load boost dispatched. 312 consumers activated.
+  </div>
+
+  <!-- KPI row -->
+  <div class="g4">
+    <div class="kpi"><div class="kpi-label">Net imbalance</div><div class="kpi-val am" id="kpi-imb">+1.30<span class="kpi-unit"> MW</span></div><div class="kpi-sub">18.3% excess supply</div></div>
+    <div class="kpi"><div class="kpi-label">DR response load</div><div class="kpi-val gr" id="kpi-drload">890<span class="kpi-unit"> kW</span></div><div class="kpi-sub">absorbing surplus</div></div>
+    <div class="kpi"><div class="kpi-label">Incentive price</div><div class="kpi-val ac" id="kpi-inc">$0.06<span class="kpi-unit">/kWh</span></div><div class="kpi-sub">discount vs base $0.28</div></div>
+    <div class="kpi"><div class="kpi-label">Curtailed load</div><div class="kpi-val rd" id="kpi-curt">0<span class="kpi-unit"> kW</span></div><div class="kpi-sub">none active</div></div>
+  </div>
+
+  <div class="g2">
+    <!-- Supply/demand chart -->
+    <div class="panel">
+      <div class="panel-hd"><div class="pt ac">Supply vs demand — last 4 hours</div></div>
+      <div style="position:relative;width:100%;height:190px">
+        <canvas id="supDemChart" role="img" aria-label="Supply vs demand chart showing solar generation vs grid demand with imbalance band">Supply demand chart</canvas>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;background:#00e676;display:inline-block;border-radius:2px"></span>Solar gen (MW)</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;background:#00d4ff;display:inline-block;border-radius:2px"></span>Grid demand (MW)</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;border-top:2px dashed #ffab40;display:inline-block"></span>+10% threshold</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;border-top:2px dashed #ff5252;display:inline-block"></span>-10% threshold</span>
+      </div>
+    </div>
+
+    <!-- Spot price + DR events chart -->
+    <div class="panel">
+      <div class="panel-hd"><div class="pt am">Spot price & DR events — last 4 hours</div></div>
+      <div style="position:relative;width:100%;height:190px">
+        <canvas id="priceChart" role="img" aria-label="Electricity spot price with DR event markers">Spot price chart</canvas>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;background:#ffab40;display:inline-block;border-radius:2px"></span>Spot price ($/MWh)</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)"><span style="width:14px;height:3px;background:#ce93d8;display:inline-block;border-radius:2px"></span>CPP threshold</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active alarms -->
+  <div class="panel">
+    <div class="panel-hd"><div class="pt rd">Active DR events & alarms</div></div>
+    <div class="alarm ma"><div class="ab">EXCESS</div><div><div class="at">Supply 18.3% above demand. Solar gen 8.4 MW vs demand 7.1 MW. Excess DR program activated — EV chargers and HVAC loads incentivised to absorb surplus.</div><div class="atime">14:32:00 · Duration 00:18:22</div></div></div>
+    <div class="alarm in"><div class="ab">INCENTIVE</div><div><div class="at">Real-time price discount dispatched to 312 DR consumers. Incentive: $0.06/kWh (vs base $0.28/kWh). 78% acceptance rate. 890 kW additional load activated.</div><div class="atime">14:32:05</div></div></div>
+    <div class="alarm ok"><div class="ab">ENROLLED</div><div><div class="at">EV fleet aggregator (Northgate Depot, 8 vehicles) boosted charging to +45 kW. HVAC aggregator (CBD Zone, 24 units) increased setpoints by +2°C.</div><div class="atime">14:32:18</div></div></div>
+    <div class="alarm in"><div class="ab">FORECAST</div><div><div class="at">Spot price forecast: CPP threshold (>$300/MWh) expected 16:30–18:00. CPP DR program pre-arming: notify consumers, prepare curtailment orders.</div><div class="atime">14:38:00</div></div></div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════ DR PROGRAMS ═══════════════════════════════════════ -->
+<div class="section" id="sec-programs">
+
+  <div class="g2">
+    <!-- Program 1: Real-time incentive -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="pt gr">Program 1 — Real-time price incentive (excess)</div>
+        <span class="badge b-gr">ACTIVE</span>
+      </div>
+      <div class="strip"><span class="sl">Trigger condition</span><span class="sv gr">Supply > demand + 10%</span></div>
+      <div class="strip"><span class="sl">Incentive type</span><span class="sv ac">Price discount — reduce $/kWh</span></div>
+      <div class="strip"><span class="sl">Base tariff</span><span class="sv">$0.28 / kWh</span></div>
+      <div class="strip"><span class="sl">DR incentive price</span><span class="sv gr">$0.06 / kWh (−79%)</span></div>
+      <div class="strip"><span class="sl">Eligible loads</span><span class="sv ac">EV chargers · HVAC · Hot water · Pool pumps</span></div>
+      <div class="strip"><span class="sl">Enrolled consumers</span><span class="sv">312</span></div>
+      <div class="strip"><span class="sl">Current response</span><span class="sv gr">890 kW absorbed</span></div>
+      <div class="strip"><span class="sl">Notification method</span><span class="sv">AMI push · SMS · API</span></div>
+      <div class="strip"><span class="sl">Duration limit</span><span class="sv">4 hours max per event</span></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn success" onclick="dispatchProg(1)">Dispatch now</button>
+        <button class="btn" onclick="editProg(1)">Edit parameters</button>
+        <button class="btn danger" onclick="cancelProg(1)">Cancel event</button>
+      </div>
+      <div class="code" style="margin-top:8px;font-size:9px"><span class="kw">trigger</span>: supply_pct > demand_pct + <span class="nu">10</span>
+<span class="kw">action</span>:
+  type: <span class="st">price_incentive</span>
+  new_price: <span class="nu">0.06</span>    <span class="cm"># $/kWh</span>
+  eligible: [<span class="st">ev_charger</span>, <span class="st">hvac</span>, <span class="st">hot_water</span>]
+  notify_method: [<span class="st">ami_push</span>, <span class="st">sms</span>]
+  duration_limit: <span class="nu">240</span>  <span class="cm"># minutes</span></div>
+    </div>
+
+    <!-- Program 2: Real-time curtailment (deficit) -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="pt am">Program 2 — Real-time curtailment (deficit)</div>
+        <span class="badge b-gray">STANDBY</span>
+      </div>
+      <div class="strip"><span class="sl">Trigger condition</span><span class="sv am">Demand > supply + 10%</span></div>
+      <div class="strip"><span class="sl">Curtailment type</span><span class="sv rd">Direct load control — aggregators</span></div>
+      <div class="strip"><span class="sl">Curtailment signal</span><span class="sv rd">Reduce load kW setpoint</span></div>
+      <div class="strip"><span class="sl">Priority order</span><span class="sv">1: EV chargers · 2: HVAC · 3: Industry</span></div>
+      <div class="strip"><span class="sl">Max curtailment</span><span class="sv rd">2.4 MW available</span></div>
+      <div class="strip"><span class="sl">Aggregators enrolled</span><span class="sv">4 aggregators · 127 assets</span></div>
+      <div class="strip"><span class="sl">Compensation</span><span class="sv am">$180 / MWh curtailed</span></div>
+      <div class="strip"><span class="sl">Response time</span><span class="sv">< 60 seconds</span></div>
+      <div class="strip"><span class="sl">Protocol</span><span class="sv ac">OpenADR 2.0b · OCPP · Modbus</span></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn amber" onclick="dispatchProg(2)">Arm curtailment</button>
+        <button class="btn" onclick="editProg(2)">Edit parameters</button>
+        <button class="btn" onclick="testProg(2)">Test dispatch</button>
+      </div>
+      <div class="code" style="margin-top:8px;font-size:9px"><span class="kw">trigger</span>: demand_pct > supply_pct + <span class="nu">10</span>
+<span class="kw">action</span>:
+  type: <span class="st">direct_load_curtail</span>
+  protocol: <span class="st">OpenADR_2.0b</span>
+  priority_order: [<span class="st">ev</span>, <span class="st">hvac</span>, <span class="st">industrial</span>]
+  curtail_ramp: <span class="nu">30</span>    <span class="cm"># seconds</span>
+  compensation: <span class="nu">180</span>  <span class="cm"># $/MWh</span></div>
+    </div>
+  </div>
+
+  <div class="g2">
+    <!-- Program 3: CPP -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="pt pu">Program 3 — Critical Peak Pricing (CPP)</div>
+        <span class="badge b-am">PRE-ARMING</span>
+      </div>
+      <div class="strip"><span class="sl">Trigger condition</span><span class="sv pu">Spot price > $300/MWh</span></div>
+      <div class="strip"><span class="sl">CPP tariff multiplier</span><span class="sv rd">5× base rate = $1.40/kWh</span></div>
+      <div class="strip"><span class="sl">Pre-arm lead time</span><span class="sv am">90 minutes before forecast CPP</span></div>
+      <div class="strip"><span class="sl">Notification</span><span class="sv">SMS + AMI in-home display + API</span></div>
+      <div class="strip"><span class="sl">CPP consumers</span><span class="sv">535 enrolled (opt-in)</span></div>
+      <div class="strip"><span class="sl">Typical response</span><span class="sv gr">30–45% load reduction</span></div>
+      <div class="strip"><span class="sl">Next forecast CPP</span><span class="sv pu">16:30 today · 90 min away</span></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn" style="border-color:rgba(206,147,216,.3);color:var(--purple)" onclick="armCPP()">Send CPP pre-notice</button>
+        <button class="btn" onclick="editProg(3)">Edit CPP parameters</button>
+      </div>
+    </div>
+
+    <!-- Program 4: EV V2G -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="pt tl">Program 4 — EV V2G discharge (deficit)</div>
+        <span class="badge b-gray">STANDBY</span>
+      </div>
+      <div class="strip"><span class="sl">Trigger condition</span><span class="sv rd">Demand > supply + 15%</span></div>
+      <div class="strip"><span class="sl">V2G export price</span><span class="sv gr">$0.42/kWh export credit</span></div>
+      <div class="strip"><span class="sl">EV fleet enrolled</span><span class="sv">3 aggregators · 48 vehicles</span></div>
+      <div class="strip"><span class="sl">Available capacity</span><span class="sv tl">180 kW · avg SoC 68%</span></div>
+      <div class="strip"><span class="sl">Protocol</span><span class="sv ac">ISO 15118 · OCPP 2.0.1 V2G</span></div>
+      <div class="strip"><span class="sl">Min vehicle SoC</span><span class="sv">40% (protect customer range)</span></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn" style="border-color:rgba(77,182,172,.3);color:var(--teal)" onclick="armV2G()">Arm V2G program</button>
+        <button class="btn" onclick="editProg(4)">Edit parameters</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════ DR CONSUMERS ═══════════════════════════════════════ -->
+<div class="section" id="sec-consumers">
+
+  <div class="panel" style="margin-bottom:10px">
+    <div class="panel-hd">
+      <div class="pt ac">DR consumer fleet — 847 enrolled · 4 aggregators</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn primary" onclick="dispatchAll()">Dispatch all DR</button>
+        <button class="btn danger" onclick="cancelAll()">Cancel all</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px" id="consumer-grid">
+
+      <!-- EV aggregator -->
+      <div class="dr-card dispatched" id="dc-ev">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">EV fleet — Northgate depot</div>
+          <span class="badge b-am" id="ev-badge">Dispatched</span>
+        </div>
+        <div class="strip"><span class="sl">Load type</span><span class="sv ac">EV chargers (OCPP)</span></div>
+        <div class="strip"><span class="sl">Assets</span><span class="sv">8 vehicles · 4 bays</span></div>
+        <div class="strip"><span class="sl">Current draw</span><span class="sv gr" id="ev-draw">+45 kW</span></div>
+        <div class="strip"><span class="sl">Incentive sent</span><span class="sv gr">$0.06/kWh confirmed</span></div>
+        <div class="strip"><span class="sl">Response</span><span class="sv gr">Accepted 14:32:18</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" id="ev-bar" style="width:38%;background:var(--green)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">38% of available 120 kW capacity used</div>
+      </div>
+
+      <!-- HVAC aggregator -->
+      <div class="dr-card dispatched" id="dc-hvac">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">HVAC — CBD commercial zone</div>
+          <span class="badge b-am" id="hvac-badge">Dispatched</span>
+        </div>
+        <div class="strip"><span class="sl">Load type</span><span class="sv ac">HVAC / cooling (BACnet)</span></div>
+        <div class="strip"><span class="sl">Assets</span><span class="sv">24 commercial units</span></div>
+        <div class="strip"><span class="sl">Setpoint shift</span><span class="sv gr" id="hvac-sp">+2°C (increase cooling)</span></div>
+        <div class="strip"><span class="sl">Load increase</span><span class="sv gr" id="hvac-draw">+285 kW</span></div>
+        <div class="strip"><span class="sl">Incentive</span><span class="sv gr">$0.06/kWh active</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" id="hvac-bar" style="width:52%;background:var(--green)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">52% of available 550 kW HVAC capacity</div>
+      </div>
+
+      <!-- Hot water aggregator -->
+      <div class="dr-card enrolled" id="dc-hw">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">Hot water — residential pool</div>
+          <span class="badge b-gr" id="hw-badge">Enrolled</span>
+        </div>
+        <div class="strip"><span class="sl">Load type</span><span class="sv ac">Electric hot water (AMI)</span></div>
+        <div class="strip"><span class="sl">Assets</span><span class="sv">280 residential meters</span></div>
+        <div class="strip"><span class="sl">Current mode</span><span class="sv" id="hw-mode">Awaiting dispatch</span></div>
+        <div class="strip"><span class="sl">Available capacity</span><span class="sv gr">420 kW</span></div>
+        <div class="strip"><span class="sl">AMI control</span><span class="sv ac">Load switch via meter</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" id="hw-bar" style="width:0%;background:var(--teal)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;font-family:var(--font-mono)" id="hw-sub">0% — not yet dispatched</div>
+        <button class="btn success" style="margin-top:8px;width:100%;font-size:10px" onclick="dispatchHW()">Dispatch hot water DR</button>
+      </div>
+
+      <!-- Industrial curtailment -->
+      <div class="dr-card" id="dc-ind">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">Industrial — Riverside precinct</div>
+          <span class="badge b-gray" id="ind-badge">Standby</span>
+        </div>
+        <div class="strip"><span class="sl">Load type</span><span class="sv ac">Industrial process (OpenADR)</span></div>
+        <div class="strip"><span class="sl">Assets</span><span class="sv">6 industrial sites</span></div>
+        <div class="strip"><span class="sl">Curtail capacity</span><span class="sv rd">1.4 MW available</span></div>
+        <div class="strip"><span class="sl">Compensation</span><span class="sv am">$180/MWh curtailed</span></div>
+        <div class="strip"><span class="sl">Response time</span><span class="sv">< 5 minutes</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" id="ind-bar" style="width:0%;background:var(--red)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">0% — awaiting deficit trigger</div>
+        <button class="btn danger" style="margin-top:8px;width:100%;font-size:10px" onclick="curtailInd()">Force curtailment</button>
+      </div>
+
+      <!-- Residential CPP -->
+      <div class="dr-card cpp" id="dc-cpp">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">Residential CPP — 535 consumers</div>
+          <span class="badge b-pu" id="cpp-badge">Pre-arming</span>
+        </div>
+        <div class="strip"><span class="sl">Program type</span><span class="sv pu">Critical Peak Pricing</span></div>
+        <div class="strip"><span class="sl">CPP tariff</span><span class="sv rd">$1.40/kWh (5× base)</span></div>
+        <div class="strip"><span class="sl">Pre-notice sent</span><span class="sv am">90-min advance via SMS</span></div>
+        <div class="strip"><span class="sl">Expected reduction</span><span class="sv gr">35% avg load reduction</span></div>
+        <div class="strip"><span class="sl">CPP window</span><span class="sv pu">16:30 – 18:00 today</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" id="cpp-bar" style="width:20%;background:var(--purple)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">20% consumers pre-adjusted loads</div>
+      </div>
+
+      <!-- Pool pump control -->
+      <div class="dr-card enrolled" id="dc-pool">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--text)">Pool pumps — suburban zone</div>
+          <span class="badge b-gr">Enrolled</span>
+        </div>
+        <div class="strip"><span class="sl">Load type</span><span class="sv ac">Pool pumps (AMI switch)</span></div>
+        <div class="strip"><span class="sl">Assets</span><span class="sv">142 residential pumps</span></div>
+        <div class="strip"><span class="sl">Available capacity</span><span class="sv">160 kW flexible</span></div>
+        <div class="strip"><span class="sl">Control method</span><span class="sv ac">AMI load switch relay</span></div>
+        <div class="strip"><span class="sl">Current status</span><span class="sv gr">All running (off-peak)</span></div>
+        <div class="pbar-wrap" style="margin-top:4px"><div class="pbar" style="width:0%;background:var(--teal)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">0% curtailed — not triggered</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Consumer response log -->
+  <div class="panel">
+    <div class="pt tl" style="margin-bottom:8px">Consumer response log — today</div>
+    <table class="tbl">
+      <thead><tr><th>Time</th><th>Consumer</th><th>Program</th><th>Signal</th><th>Response</th><th>kW change</th><th>Status</th></tr></thead>
+      <tbody id="response-log">
+        <tr><td style="font-family:var(--font-mono)">14:32:18</td><td>EV Fleet · Northgate</td><td>Incentive — excess</td><td>$0.06/kWh</td><td>Accepted via OCPP</td><td style="color:var(--green);font-family:var(--font-mono)">+45 kW</td><td><span class="badge b-gr">Complete</span></td></tr>
+        <tr><td style="font-family:var(--font-mono)">14:32:22</td><td>HVAC · CBD Zone</td><td>Incentive — excess</td><td>+2°C setpoint</td><td>Accepted via BACnet</td><td style="color:var(--green);font-family:var(--font-mono)">+285 kW</td><td><span class="badge b-gr">Complete</span></td></tr>
+        <tr><td style="font-family:var(--font-mono)">14:33:01</td><td>Residential pool (280)</td><td>Incentive — excess</td><td>$0.06/kWh</td><td>AMI push sent</td><td style="color:var(--amber);font-family:var(--font-mono)">+560 kW</td><td><span class="badge b-am">Partial</span></td></tr>
+        <tr><td style="font-family:var(--font-mono)">14:38:00</td><td>CPP consumers (535)</td><td>CPP pre-notice</td><td>$1.40/kWh @ 16:30</td><td>SMS delivered</td><td style="color:var(--purple);font-family:var(--font-mono)">−pending</td><td><span class="badge b-pu">Notified</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ MARKET ═══════════════════════════════════════ -->
+<div class="section" id="sec-market">
+  <div class="g2">
+    <div class="panel">
+      <div class="panel-hd"><div class="pt am">AEMO spot price — 5-min intervals</div></div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="spotChart" role="img" aria-label="5-minute spot price chart">Spot price intervals</canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-hd"><div class="pt gr">Solar generation forecast vs actual</div></div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="solarChart" role="img" aria-label="Solar generation forecast vs actual">Solar chart</canvas>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="pt ac" style="margin-bottom:8px">Market state — DR trigger logic</div>
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+      <div class="kpi"><div class="kpi-label">5-min spot</div><div class="kpi-val am" id="m-spot">$187</div><div class="kpi-sub">/MWh</div></div>
+      <div class="kpi"><div class="kpi-label">30-min FCAS</div><div class="kpi-val ac">$42</div><div class="kpi-sub">/MWh</div></div>
+      <div class="kpi"><div class="kpi-label">Supply excess</div><div class="kpi-val am">+18.3%</div><div class="kpi-sub">above demand</div></div>
+      <div class="kpi"><div class="kpi-label">CPP forecast</div><div class="kpi-val pu">16:30</div><div class="kpi-sub">+90 min</div></div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="pt" style="margin-bottom:5px;color:var(--text3)">DR TRIGGER THRESHOLDS — LIVE EVALUATION</div>
+      <div class="strip"><span class="sl">Excess supply trigger (>+10%)</span><span class="sv am">+18.3% — TRIGGERED</span><span class="badge b-am">Active</span></div>
+      <div class="strip"><span class="sl">Deficit trigger (>-10%)</span><span class="sv gr">Not active</span><span class="badge b-gr">Normal</span></div>
+      <div class="strip"><span class="sl">CPP price trigger (>$300/MWh)</span><span class="sv pu">Forecast 16:30 — pre-arming</span><span class="badge b-pu">Pre-arm</span></div>
+      <div class="strip"><span class="sl">V2G trigger (>-15%)</span><span class="sv gr">Not active</span><span class="badge b-gr">Normal</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ SIMULATION ═══════════════════════════════════════ -->
+<div class="section" id="sec-simulation">
+
+  <div class="sim-ctrl">
+    <span class="sim-label">Simulation controls:</span>
+    <button class="btn success" id="sim-play-btn" onclick="toggleSim()">&#9654; Run simulation</button>
+    <button class="btn" onclick="resetSim()">Reset</button>
+    <select id="sim-scenario" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:4px;padding:5px 8px;font-family:var(--font-mono);font-size:11px" onchange="loadScenario()">
+      <option value="excess">Morning solar excess (+18%)</option>
+      <option value="deficit">Evening peak deficit (-14%)</option>
+      <option value="cpp">Critical peak pricing event</option>
+      <option value="v2g">V2G discharge event</option>
+    </select>
+    <span class="sim-label" id="sim-time-lbl">Time: 14:30</span>
+    <span class="sim-label" id="sim-step-lbl">Step: 0 / 24</span>
+  </div>
+
+  <div id="sim-banner" class="dr-banner excess">Simulation ready — press Run to begin. Scenario: Morning solar excess (+18%)</div>
+
+  <div class="g2" style="margin-bottom:10px">
+    <div class="panel">
+      <div class="pt ac" style="margin-bottom:6px">Simulation — supply vs demand</div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="simChart" role="img" aria-label="Simulation supply demand chart">Simulation chart</canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="pt am" style="margin-bottom:6px">Simulation — spot price & DR events</div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="simPriceChart" role="img" aria-label="Simulation price chart">Simulation price chart</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="g3">
+    <!-- Supply/demand state -->
+    <div class="panel">
+      <div class="pt gr" style="margin-bottom:6px">Live state</div>
+      <div class="strip"><span class="sl">Solar gen</span><span class="sv gr" id="sim-solar">8.4 MW</span></div>
+      <div class="strip"><span class="sl">Grid demand</span><span class="sv ac" id="sim-dem">7.1 MW</span></div>
+      <div class="strip"><span class="sl">DR load added</span><span class="sv gr" id="sim-drload">0 kW</span></div>
+      <div class="strip"><span class="sl">Net imbalance</span><span class="sv am" id="sim-imb">+1.30 MW</span></div>
+      <div class="strip"><span class="sl">Spot price</span><span class="sv am" id="sim-price">$187/MWh</span></div>
+      <div class="strip"><span class="sl">DR status</span><span class="sv am" id="sim-drstatus">Excess</span></div>
+    </div>
+
+    <!-- DR program state -->
+    <div class="panel">
+      <div class="pt am" style="margin-bottom:6px">DR program state</div>
+      <div class="strip"><span class="sl">Prog 1 — Incentive</span><span class="badge b-gr" id="sim-p1">Idle</span></div>
+      <div class="strip"><span class="sl">Prog 2 — Curtailment</span><span class="badge b-gray" id="sim-p2">Idle</span></div>
+      <div class="strip"><span class="sl">Prog 3 — CPP</span><span class="badge b-gray" id="sim-p3">Idle</span></div>
+      <div class="strip"><span class="sl">Prog 4 — V2G</span><span class="badge b-gray" id="sim-p4">Idle</span></div>
+      <div class="strip"><span class="sl">EV load</span><span class="sv gr" id="sim-ev">0 kW</span></div>
+      <div class="strip"><span class="sl">HVAC load</span><span class="sv gr" id="sim-hvac">0 kW</span></div>
+    </div>
+
+    <!-- Simulation event log -->
+    <div class="panel">
+      <div class="pt tl" style="margin-bottom:6px">Simulation event log</div>
+      <div id="sim-log" style="max-height:180px;overflow-y:auto;font-size:10px;font-family:var(--font-mono);color:var(--text2);line-height:1.9">
+        <div style="color:var(--text3)">Press run to begin simulation...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════ CONFIG ═══════════════════════════════════════ -->
+<div class="section" id="sec-config">
+  <div class="g2">
+    <div class="panel">
+      <div class="pt ac" style="margin-bottom:8px">DR trigger thresholds</div>
+      <div class="field"><label>Excess supply trigger (%)</label><input type="number" value="10" id="cfg-excess"></div>
+      <div class="field"><label>Deficit supply trigger (%)</label><input type="number" value="10" id="cfg-deficit"></div>
+      <div class="field"><label>CPP spot price threshold ($/MWh)</label><input type="number" value="300" id="cfg-cpp"></div>
+      <div class="field"><label>V2G discharge trigger (%)</label><input type="number" value="15" id="cfg-v2g"></div>
+      <div class="field"><label>Evaluation window (minutes)</label><input type="number" value="5" id="cfg-window"></div>
+      <button class="btn success" style="width:100%" onclick="saveCfg()">Save thresholds</button>
+    </div>
+    <div class="panel">
+      <div class="pt am" style="margin-bottom:8px">Incentive pricing rules</div>
+      <div class="field"><label>Base tariff ($/kWh)</label><input type="number" value="0.28" step="0.01" id="cfg-base"></div>
+      <div class="field"><label>Excess incentive price ($/kWh)</label><input type="number" value="0.06" step="0.01" id="cfg-inc"></div>
+      <div class="field"><label>CPP tariff multiplier (×base)</label><input type="number" value="5" id="cfg-mult"></div>
+      <div class="field"><label>Curtailment compensation ($/MWh)</label><input type="number" value="180" id="cfg-comp"></div>
+      <div class="field"><label>V2G export credit ($/kWh)</label><input type="number" value="0.42" step="0.01" id="cfg-v2gcredit"></div>
+      <button class="btn primary" style="width:100%" onclick="savePricing()">Save pricing rules</button>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="pt pu" style="margin-bottom:8px">MDM — market data integration</div>
+    <div class="strip"><span class="sl">AEMO 5-min price feed</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+    <div class="strip"><span class="sl">Solar forecast API (BOM)</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+    <div class="strip"><span class="sl">AMI head-end (DR signal push)</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+    <div class="strip"><span class="sl">OpenADR 2.0b VTN server</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+    <div class="strip"><span class="sl">OCPP CMS (EV chargers)</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+    <div class="strip"><span class="sl">BACnet/IP (HVAC)</span><span class="badge b-am">Partial</span><button class="btn primary" style="padding:2px 8px;font-size:9px">Fix</button></div>
+    <div class="strip"><span class="sl">SMS gateway (CPP notifications)</span><span class="badge b-gr">Connected</span><button class="btn" style="padding:2px 8px;font-size:9px">Configure</button></div>
+  </div>
+</div>
+
+</div>
+
+<!-- Status bar -->
+<div class="statusbar">
+  <span id="sb-left">MDMS DR Control · Live · 847 consumers enrolled · Last market update: <span id="sb-time">--:--:--</span></span>
+  <div style="display:flex;gap:16px">
+    <span>AEMO feed: OK</span>
+    <span>AMI: OK</span>
+    <span>OpenADR: OK</span>
+    <span>v3.1.4</span>
+  </div>
+</div>
+
+</div>
+
+<script>
+/* ─────────────── Tab switching ─────────────── */
+function tab(t){
+  document.querySelectorAll('.nav-tab').forEach((b,i)=>{
+    const ts=['overview','programs','consumers','market','simulation','config'];
+    b.classList.toggle('on', ts[i]===t);
+  });
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('on'));
+  document.getElementById('sec-'+t).classList.add('on');
+}
+
+/* ─────────────── Clock ─────────────── */
+function updateClock(){
+  const now=new Date();
+  const ts=now.toLocaleTimeString('en-AU',{hour12:false});
+  document.getElementById('clock').textContent=ts;
+  document.getElementById('sb-time').textContent=ts;
+}
+setInterval(updateClock,1000); updateClock();
+
+/* ─────────────── Build charts ─────────────── */
+const hrs=['10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:32'];
+
+/* Supply vs demand */
+(function(){
+  const solar=[4.1,5.2,6.3,7.1,7.6,7.9,8.1,8.3,8.4];
+  const demand=[5.8,6.0,6.2,6.5,6.7,6.9,7.0,7.0,7.1];
+  const thresh_hi=demand.map(d=>+(d*1.1).toFixed(2));
+  const thresh_lo=demand.map(d=>+(d*0.9).toFixed(2));
+  const ctx=document.getElementById('supDemChart').getContext('2d');
+  new Chart(ctx,{type:'line',data:{labels:hrs,datasets:[
+    {label:'Solar',data:solar,borderColor:'#00e676',borderWidth:2,pointRadius:3,pointBackgroundColor:'#00e676',tension:.3,fill:false},
+    {label:'Demand',data:demand,borderColor:'#00d4ff',borderWidth:2,pointRadius:2,pointBackgroundColor:'#00d4ff',tension:.3,fill:false},
+    {label:'+10%',data:thresh_hi,borderColor:'#ffab40',borderWidth:1,borderDash:[5,3],pointRadius:0,tension:.3,fill:false},
+    {label:'-10%',data:thresh_lo,borderColor:'#ff5252',borderWidth:1,borderDash:[5,3],pointRadius:0,tension:.3,fill:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:9}},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9},callback:v=>v+'MW'},grid:{color:'#1e2d42'},min:3,max:10}}}});
+})();
+
+/* Spot price chart */
+(function(){
+  const prices=[88,95,102,115,128,141,155,163,187];
+  const cpp=Array(9).fill(300);
+  const ctx=document.getElementById('priceChart').getContext('2d');
+  new Chart(ctx,{type:'line',data:{labels:hrs,datasets:[
+    {label:'Spot price',data:prices,borderColor:'#ffab40',borderWidth:2,pointRadius:3,pointBackgroundColor:'#ffab40',tension:.3,fill:false},
+    {label:'CPP threshold',data:cpp,borderColor:'#ce93d8',borderWidth:1,borderDash:[5,3],pointRadius:0,fill:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:9}},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9},callback:v=>'$'+v},grid:{color:'#1e2d42'},min:0,max:400}}}});
+})();
+
+/* Market spot 5-min */
+(function(){
+  const labels=Array.from({length:18},(_,i)=>{const h=12,m=i*5;return `${Math.floor(h+m/60).toString().padStart(2,'0')}:${(m%60).toString().padStart(2,'0')}`;});
+  const prices=[80,82,88,95,101,108,115,122,128,135,141,148,155,160,163,170,180,187];
+  const ctx=document.getElementById('spotChart').getContext('2d');
+  new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'$/MWh',data:prices,backgroundColor:prices.map(p=>p>300?'rgba(255,82,82,.7)':p>200?'rgba(255,171,64,.7)':'rgba(0,212,255,.5)'),borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:8},maxRotation:30},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9},callback:v=>'$'+v},grid:{color:'#1e2d42'},min:0}}}});
+})();
+
+/* Solar forecast */
+(function(){
+  const labels=['06:00','07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','14:32','15:00','16:00','17:00'];
+  const forecast=[0,0.2,1.1,3.4,5.8,7.4,8.6,8.8,8.5,8.4,7.2,4.8,1.6];
+  const actual=[0,0.18,1.05,3.2,5.6,7.2,8.5,8.9,8.4,8.4,null,null,null];
+  const ctx=document.getElementById('solarChart').getContext('2d');
+  new Chart(ctx,{type:'line',data:{labels,datasets:[
+    {label:'Forecast',data:forecast,borderColor:'#ffab40',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:.3,fill:false},
+    {label:'Actual',data:actual,borderColor:'#00e676',borderWidth:2,pointRadius:2,pointBackgroundColor:'#00e676',tension:.3,fill:false,spanGaps:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:8},maxRotation:30},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9},callback:v=>v+'MW'},grid:{color:'#1e2d42'},min:0}}}});
+})();
+
+/* ─────────────── Simulation ─────────────── */
+const SCENARIOS = {
+  excess:{
+    label:'Morning solar excess (+18%)',
+    bannerCls:'excess',
+    bannerTxt:'EXCESS SUPPLY EVENT — Solar generation exceeds demand by 18%. Incentive DR programs activated. EV and HVAC loads absorbing surplus.',
+    steps:24,
+    solar:[6.2,6.5,6.8,7.1,7.4,7.7,7.9,8.1,8.3,8.4,8.5,8.6,8.6,8.5,8.4,8.2,7.8,7.3,6.5,5.4,4.1,2.8,1.4,0.5],
+    demand:[5.8,5.9,6.0,6.1,6.2,6.3,6.5,6.7,6.9,7.0,7.1,7.1,7.0,7.0,6.9,6.8,6.7,6.6,6.5,6.4,6.4,6.5,6.6,6.7],
+    prices:[88,92,98,105,115,128,142,155,163,175,187,192,185,178,170,162,155,148,142,138,135,140,148,160],
+    drload:[0,0,0,100,250,420,560,680,780,850,890,900,890,870,840,800,750,680,580,400,200,50,0,0],
+    events:[
+      [3,'Incentive DR activated — excess +12%'],
+      [5,'EV fleet Northgate dispatched +45 kW'],
+      [6,'HVAC CBD Zone dispatched +285 kW'],
+      [8,'Hot water pool dispatched +420 kW'],
+      [10,'Peak excess +18.3% — 890 kW absorbed'],
+      [15,'Excess reducing — incentive reducing'],
+      [20,'DR program deactivating — balance restored'],
+    ]
+  },
+  deficit:{
+    label:'Evening peak deficit (-14%)',
+    bannerCls:'deficit',
+    bannerTxt:'SUPPLY DEFICIT EVENT — Demand exceeds supply by 14%. Curtailment DR programs active. Industrial and HVAC loads being curtailed.',
+    steps:24,
+    solar:[3.2,2.4,1.6,0.8,0.3,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.1,0.4,0.9,1.8,3.2,5.1,6.8,7.4,6.2,4.1,2.0],
+    demand:[6.5,6.8,7.2,7.8,8.4,9.1,9.6,9.8,9.7,9.4,8.9,8.3,7.8,7.5,7.2,7.0,6.9,7.1,7.5,8.2,8.8,8.4,7.8,7.2],
+    prices:[120,130,145,165,190,230,280,320,380,450,390,310,250,190,162,148,138,145,165,210,260,220,180,155],
+    drload:[0,0,-200,-450,-700,-900,-1100,-1200,-1150,-1050,-900,-700,-500,-300,-100,0,0,0,0,-200,-500,-400,-200,0],
+    events:[
+      [3,'Curtailment DR arms — deficit -8%'],
+      [5,'HVAC CBD zone curtailed -400 kW'],
+      [6,'Industrial Riverside curtailed -700 kW'],
+      [7,'CPP activated $320/MWh'],
+      [8,'CPP peak $450/MWh — max curtailment'],
+      [10,'Deficit easing — curtailment reducing'],
+      [14,'DR deactivating — balance restored'],
+    ]
+  },
+  cpp:{
+    label:'Critical peak pricing event',
+    bannerCls:'cpp',
+    bannerTxt:'CRITICAL PEAK PRICING EVENT — Spot price exceeded $300/MWh. CPP tariff $1.40/kWh active for 535 enrolled consumers. Demand reducing.',
+    steps:24,
+    solar:[7.0,7.2,7.4,7.5,7.5,7.4,7.2,6.8,6.2,5.4,4.4,3.2,2.0,1.2,0.6,0.2,0.0,0.0,0.0,0.1,0.5,1.2,2.4,3.8],
+    demand:[7.0,7.1,7.2,7.3,7.5,7.8,8.1,8.5,9.0,9.4,9.6,9.4,8.9,8.4,7.8,7.2,6.8,6.5,6.4,6.3,6.3,6.4,6.5,6.7],
+    prices:[140,145,152,160,175,195,220,260,310,370,420,380,340,290,240,195,165,148,140,138,135,138,142,148],
+    drload:[0,0,0,0,0,-100,-250,-450,-700,-900,-950,-880,-780,-650,-500,-350,-200,-100,0,0,0,0,0,0],
+    events:[
+      [5,'CPP pre-notice sent — $1.40/kWh forecast'],
+      [7,'CPP activated $260/MWh — tariff live'],
+      [8,'535 CPP consumers notified via SMS+AMI'],
+      [9,'CPP peak $420/MWh — demand falling'],
+      [10,'28% load reduction from CPP consumers'],
+      [12,'CPP easing — spot price falling'],
+      [15,'CPP deactivated — spot below $300/MWh'],
+    ]
+  },
+  v2g:{
+    label:'V2G discharge event',
+    bannerCls:'deficit',
+    bannerTxt:'V2G DISCHARGE EVENT — Demand exceeds supply by 16%. 48 EV vehicles discharging to grid at $0.42/kWh credit. 180 kW exported.',
+    steps:24,
+    solar:[0.2,0.1,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.2,0.8,2.1,4.2,6.1,7.4,8.1,8.4,7.9,6.8,5.4,3.8,2.1,0.9,0.3],
+    demand:[6.0,5.8,5.6,5.5,5.6,5.8,6.2,6.8,7.5,8.1,8.6,9.0,9.2,9.3,9.2,8.9,8.4,7.8,7.2,6.8,6.5,6.3,6.2,6.1],
+    prices:[110,105,100,98,100,108,122,140,165,195,230,275,310,340,320,295,265,235,205,180,160,148,138,128],
+    drload:[0,0,0,0,0,0,0,0,-80,-120,-150,-170,-180,-180,-175,-165,-150,-130,-100,-60,-20,0,0,0],
+    events:[
+      [8,'Deficit -12% — V2G program arms'],
+      [9,'48 EVs enrolled in V2G dispatch'],
+      [10,'V2G discharging — 150 kW exported'],
+      [11,'V2G peak — 180 kW, $0.42/kWh credit'],
+      [12,'CPP activated — additional curtailment'],
+      [16,'Deficit easing — V2G reducing'],
+      [20,'V2G program deactivated — balance restored'],
+    ]
+  }
+};
+
+let simRunning=false, simStep=0, simTimer=null, simScenario='excess', simChartInst=null, simPriceChartInst=null;
+
+function loadScenario(){
+  simScenario=document.getElementById('sim-scenario').value;
+  resetSim();
+}
+
+function buildSimCharts(){
+  const S=SCENARIOS[simScenario];
+  const stepLabels=Array.from({length:S.steps},(_,i)=>{
+    const base=10*60+i*15; return `${Math.floor(base/60).toString().padStart(2,'0')}:${(base%60).toString().padStart(2,'0')}`;
+  });
+  if(simChartInst){simChartInst.destroy();}
+  if(simPriceChartInst){simPriceChartInst.destroy();}
+  const ctx1=document.getElementById('simChart').getContext('2d');
+  simChartInst=new Chart(ctx1,{type:'line',data:{labels:stepLabels,datasets:[
+    {label:'Solar',data:Array(S.steps).fill(null),borderColor:'#00e676',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:false},
+    {label:'Demand',data:Array(S.steps).fill(null),borderColor:'#00d4ff',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:false},
+    {label:'DR load',data:Array(S.steps).fill(null),borderColor:'#ffab40',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:.3,fill:false,spanGaps:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:8},maxRotation:30},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9}},grid:{color:'#1e2d42'}}}}});
+  const ctx2=document.getElementById('simPriceChart').getContext('2d');
+  simPriceChartInst=new Chart(ctx2,{type:'line',data:{labels:stepLabels,datasets:[
+    {label:'Spot price',data:Array(S.steps).fill(null),borderColor:'#ffab40',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:false},
+    {label:'CPP',data:Array(S.steps).fill(300),borderColor:'#ce93d8',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a92ab',font:{size:8},maxRotation:30},grid:{color:'#1e2d42'}},y:{ticks:{color:'#7a92ab',font:{size:9},callback:v=>'$'+v},grid:{color:'#1e2d42'},min:0,max:500}}}});
+}
+
+function resetSim(){
+  if(simTimer){clearInterval(simTimer); simTimer=null;}
+  simRunning=false; simStep=0;
+  document.getElementById('sim-play-btn').textContent='▶ Run simulation';
+  document.getElementById('sim-step-lbl').textContent='Step: 0 / '+SCENARIOS[simScenario].steps;
+  const base=10*60; const hh=Math.floor(base/60).toString().padStart(2,'0'); const mm=(base%60).toString().padStart(2,'0');
+  document.getElementById('sim-time-lbl').textContent='Time: '+hh+':'+mm;
+  document.getElementById('sim-log').innerHTML='<div style="color:var(--text3)">Simulation reset. Press run to begin...</div>';
+  document.getElementById('sim-banner').className='dr-banner normal';
+  document.getElementById('sim-banner').textContent='Simulation ready — press Run to begin. Scenario: '+SCENARIOS[simScenario].label;
+  const S=SCENARIOS[simScenario];
+  simLog('System ready — scenario loaded: '+S.label,'ac');
+  buildSimCharts();
+  updateSimState(0);
+}
+
+function toggleSim(){
+  if(!simChartInst) buildSimCharts();
+  simRunning=!simRunning;
+  document.getElementById('sim-play-btn').textContent=simRunning?'⏸ Pause':'▶ Run simulation';
+  if(simRunning){
+    simTimer=setInterval(simTick,700);
+  } else {
+    clearInterval(simTimer); simTimer=null;
+  }
+}
+
+function simTick(){
+  const S=SCENARIOS[simScenario];
+  if(simStep>=S.steps){ clearInterval(simTimer); simTimer=null; simRunning=false; document.getElementById('sim-play-btn').textContent='▶ Run simulation'; simLog('Simulation complete.','gr'); return; }
+  const i=simStep;
+  simChartInst.data.datasets[0].data[i]=S.solar[i];
+  simChartInst.data.datasets[1].data[i]=S.demand[i];
+  simChartInst.data.datasets[2].data[i]=S.demand[i]+(S.drload[i]||0)/1000;
+  simChartInst.update('none');
+  simPriceChartInst.data.datasets[0].data[i]=S.prices[i];
+  simPriceChartInst.update('none');
+  updateSimState(i);
+  S.events.forEach(([st,msg])=>{ if(st===i) simLog(msg, st<8?'am':'gr'); });
+  const base=10*60+i*15; const hh=Math.floor(base/60).toString().padStart(2,'0'); const mm=(base%60).toString().padStart(2,'0');
+  document.getElementById('sim-time-lbl').textContent='Time: '+hh+':'+mm;
+  document.getElementById('sim-step-lbl').textContent='Step: '+(i+1)+' / '+S.steps;
+  simStep++;
+}
+
+function updateSimState(i){
+  const S=SCENARIOS[simScenario];
+  const sol=S.solar[i]||0; const dem=S.demand[i]||0; const prc=S.prices[i]||0; const drl=Math.abs(S.drload[i]||0);
+  const imb=+(sol-dem).toFixed(2); const pct=+(imb/dem*100).toFixed(1);
+  document.getElementById('sim-solar').textContent=sol.toFixed(1)+' MW';
+  document.getElementById('sim-dem').textContent=dem.toFixed(1)+' MW';
+  document.getElementById('sim-drload').textContent=(drl>0?'+':'')+drl+' kW';
+  document.getElementById('sim-imb').textContent=(imb>=0?'+':'')+imb+' MW ('+pct+'%)';
+  document.getElementById('sim-price').textContent='$'+prc+'/MWh';
+  const excess=pct>10, deficit=pct<-10, cpp=prc>300;
+  document.getElementById('sim-drstatus').textContent=excess?'Excess DR':deficit?'Deficit DR':cpp?'CPP':'Normal';
+  document.getElementById('sim-p1').className='badge '+(excess?'b-gr':'b-gray'); document.getElementById('sim-p1').textContent=excess?'ACTIVE':'Idle';
+  document.getElementById('sim-p2').className='badge '+(deficit?'b-rd':'b-gray'); document.getElementById('sim-p2').textContent=deficit?'CURTAILING':'Idle';
+  document.getElementById('sim-p3').className='badge '+(cpp?'b-pu':'b-gray'); document.getElementById('sim-p3').textContent=cpp?'CPP LIVE':'Idle';
+  document.getElementById('sim-p4').className='badge '+(simScenario==='v2g'&&pct<-15?'b-tl':'b-gray');
+  document.getElementById('sim-ev').textContent=excess?'+'+Math.round(drl*0.05)+' kW':deficit?'-'+Math.round(drl*0.12)+' kW':'0 kW';
+  document.getElementById('sim-hvac').textContent=excess?'+'+Math.round(drl*0.32)+' kW':deficit?'-'+Math.round(drl*0.35)+' kW':'0 kW';
+  const banEl=document.getElementById('sim-banner');
+  if(excess){banEl.className='dr-banner excess';banEl.textContent='EXCESS SUPPLY — +'+pct+'% solar surplus. Incentive DR programs active. Absorbing '+drl+' kW via EV/HVAC/HW loads.';}
+  else if(deficit){banEl.className='dr-banner deficit';banEl.textContent='SUPPLY DEFICIT — '+Math.abs(pct)+'% shortfall. Curtailment DR active. '+drl+' kW being curtailed from aggregators.';}
+  else if(cpp){banEl.className='dr-banner cpp';banEl.textContent='CPP EVENT — Spot $'+prc+'/MWh. $1.40/kWh CPP tariff active. 535 consumers reducing load.';}
+  else{banEl.className='dr-banner normal';banEl.textContent='NORMAL OPERATION — Supply/demand balanced. No DR programs active.';}
+}
+
+function simLog(msg, cls='ac'){
+  const log=document.getElementById('sim-log');
+  const now=new Date().toLocaleTimeString('en-AU',{hour12:false});
+  const col=cls==='gr'?'var(--green)':cls==='rd'?'var(--red)':cls==='am'?'var(--amber)':'var(--accent)';
+  log.innerHTML=`<div style="color:${col};margin-bottom:1px">[${now}] ${msg}</div>`+log.innerHTML;
+}
+
+/* ─────────────── Actions ─────────────── */
+function publishDR(){ simLog('DR event published to all enrolled consumers','gr'); }
+function dispatchProg(n){ simLog('Program '+n+' dispatch command sent via OpenADR','gr'); }
+function editProg(n){ simLog('Opening program '+n+' config editor...','ac'); }
+function testProg(n){ simLog('Test dispatch sent to program '+n+' — awaiting ACK','am'); }
+function cancelProg(n){ simLog('Program '+n+' cancelled','rd'); }
+function armCPP(){ document.getElementById('cpp-badge').textContent='CPP LIVE'; document.getElementById('cpp-badge').className='badge b-pu'; simLog('CPP $1.40/kWh notice sent to 535 consumers via SMS + AMI','pu'); }
+function armV2G(){ simLog('V2G program armed — 48 vehicles enrolled at $0.42/kWh export credit','tl'); }
+function dispatchHW(){
+  document.getElementById('hw-bar').style.width='65%';
+  document.getElementById('hw-sub').textContent='65% — 280 hot water units switched on via AMI relay';
+  document.getElementById('hw-mode').textContent='Active — heating demand +273 kW';
+  document.getElementById('hw-badge').className='badge b-am'; document.getElementById('hw-badge').textContent='Dispatched';
+  document.getElementById('dc-hw').className='dr-card dispatched';
+}
+function curtailInd(){
+  document.getElementById('ind-bar').style.width='70%';
+  document.getElementById('ind-badge').className='badge b-rd'; document.getElementById('ind-badge').textContent='Curtailing';
+  document.getElementById('dc-ind').className='dr-card curtailed';
+  simLog('Industrial Riverside curtailment dispatched — 980 kW shed via OpenADR','rd');
+}
+function dispatchAll(){ dispatchHW(); simLog('All available DR programs dispatched','gr'); }
+function cancelAll(){ simLog('All DR programs cancelled — loads restored','am'); }
+function saveCfg(){ simLog('Trigger thresholds saved','gr'); }
+function savePricing(){ simLog('Pricing rules saved','gr'); }
+
+function testWebhook(){
+  const r=document.getElementById('webhook-result');
+  if(r){ r.style.display='block'; r.textContent='OK'; }
+}
+
+/* ─────────────── Ticker animation ─────────────── */
+let tickDir=1, tickBase=187;
+setInterval(()=>{
+  tickBase+=tickDir*(Math.random()*4-1.5);
+  tickBase=Math.max(140,Math.min(280,tickBase));
+  const el=document.getElementById('t-spot');
+  if(el) el.textContent='$'+Math.round(tickBase)+'/MWh';
+  if(document.getElementById('m-spot')) document.getElementById('m-spot').textContent='$'+Math.round(tickBase);
+},3000);
+
+/* init sim */
+buildSimCharts();
+updateSimState(0);
+</script>
+</body>
+</html>
