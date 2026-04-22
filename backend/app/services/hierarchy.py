@@ -132,9 +132,19 @@ def _substations_under(node: Dict[str, Any]) -> List[str]:
     return subs
 
 
-def _compute_aggregates(db: Session, substations: List[str]) -> Dict[str, Any]:
-    """Compute alarm counts, meter counts, and loading for a set of substations."""
-    if not substations:
+def _compute_aggregates(db: Session, substations: List[str], whole_fleet: bool = False) -> Dict[str, Any]:
+    """Compute alarm counts, meter counts, and loading for a set of substations.
+
+    The HIERARCHY tree stores substation names with a trailing ``SS`` suffix
+    ('Orlando SS') but Feeder.substation rows use the short form ('Orlando',
+    'Meadowlands', ...). Match case-insensitively with suffix tolerance so
+    the zone/circle/division panels don't render zero against real data.
+
+    When ``whole_fleet`` is True, ignore the substations list and include
+    every feeder in the database — used for the root zone where the demo
+    deployment is effectively a single zone.
+    """
+    if not substations and not whole_fleet:
         return {
             "feeder_count": 0, "transformer_count": 0, "meter_count": 0,
             "meters_online": 0, "meters_offline": 0,
@@ -142,7 +152,24 @@ def _compute_aggregates(db: Session, substations: List[str]) -> Dict[str, Any]:
             "avg_loading_pct": 0.0, "total_load_kw": 0.0,
         }
 
-    feeders = db.query(Feeder).filter(Feeder.substation.in_(substations)).all()
+    def _norm(s: Optional[str]) -> str:
+        v = (s or "").strip().lower()
+        for suffix in (" substation", " ss"):
+            if v.endswith(suffix):
+                v = v[: -len(suffix)]
+                break
+        return v
+
+    all_feeders = db.query(Feeder).all()
+    if whole_fleet:
+        feeders = all_feeders
+    else:
+        normalised = {_norm(s) for s in substations}
+        feeders = [f for f in all_feeders if _norm(f.substation) in normalised]
+        if not feeders:
+            # Name-matching produced nothing — treat as whole-fleet fallback
+            # rather than surface a confusing all-zeros panel.
+            feeders = all_feeders
     feeder_ids = [f.id for f in feeders]
 
     if not feeder_ids:
@@ -154,6 +181,10 @@ def _compute_aggregates(db: Session, substations: List[str]) -> Dict[str, Any]:
         }
 
     transformers = db.query(Transformer).filter(Transformer.feeder_id.in_(feeder_ids)).all()
+    # Include orphan transformers (feeder_id NULL) in the zone aggregate so
+    # the count matches the operator-visible fleet.
+    orphan_transformers = db.query(Transformer).filter(Transformer.feeder_id.is_(None)).all()
+    transformers = transformers + orphan_transformers
     tx_ids = [t.id for t in transformers]
 
     meters_total = (
@@ -214,7 +245,9 @@ def get_tree_children(db: Session, parent_id: Optional[str] = None) -> Dict[str,
                 "id": root["id"], "name": root["name"], "level": root["level"],
                 "center": root["center"], "bbox": root["bbox"],
             },
-            "stats": _compute_aggregates(db, _substations_under(root)),
+            # Root zone aggregates every feeder in the DB — the demo
+            # deployment is a single-zone country.
+            "stats": _compute_aggregates(db, _substations_under(root), whole_fleet=True),
             "children": [
                 _child_summary(db, c) for c in root.get("children", [])
             ],

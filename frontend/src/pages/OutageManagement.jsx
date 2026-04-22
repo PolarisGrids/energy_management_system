@@ -15,12 +15,20 @@ import { outagesAPI } from '@/services/api'
 import useAuthStore from '@/stores/authStore'
 import { useToast } from '@/components/ui/Toast'
 
+// Spec-018 OutageIncidentW3 uses {OPENED, ACKNOWLEDGED, RESTORING, CLOSED}
+// while the earlier spec-016 flow still sends {DETECTED, INVESTIGATING,
+// DISPATCHED, RESTORED, CLOSED}. Accept both so the KPI row + badges work
+// regardless of which incident feed is active.
 const STATUS_BADGE = {
-  DETECTED: 'badge-critical',
+  OPENED:        'badge-critical',
+  DETECTED:      'badge-critical',
   INVESTIGATING: 'badge-high',
-  DISPATCHED: 'badge-medium',
-  RESTORED: 'badge-ok',
-  CLOSED: 'badge-low',
+  ACKNOWLEDGED:  'badge-medium',
+  DISPATCHED:    'badge-medium',
+  RESTORING:     'badge-info',
+  RESTORED:      'badge-ok',
+  CLOSED:        'badge-low',
+  CANCELLED:     'badge-low',
 }
 
 const fmt = (v, decimals = 0) =>
@@ -124,6 +132,19 @@ export default function OutageManagement() {
     return acc
   }, {})
 
+  // Normalise counts across both spec-016 and spec-018 status vocabularies
+  // so the KPI row reflects operator-friendly buckets regardless of source.
+  const activeCount = (counts.OPENED ?? 0)
+    + (counts.ACKNOWLEDGED ?? 0)
+    + (counts.RESTORING ?? 0)
+    + (counts.DETECTED ?? 0)
+    + (counts.INVESTIGATING ?? 0)
+  const dispatchedCount = (counts.ACKNOWLEDGED ?? 0)
+    + (counts.RESTORING ?? 0)
+    + (counts.DISPATCHED ?? 0)
+  const restoredCount = (counts.CLOSED ?? 0)
+    + (counts.RESTORED ?? 0)
+
   return (
     <div className="space-y-5 animate-slide-up">
       <div className="flex items-center justify-between">
@@ -145,9 +166,9 @@ export default function OutageManagement() {
 
       {/* KPI row */}
       <div className="grid grid-cols-4 gap-4">
-        <KPITile icon={AlertTriangle} label="Active" value={fmt((counts.DETECTED ?? 0) + (counts.INVESTIGATING ?? 0))} color="#E94B4B" />
-        <KPITile icon={Clock} label="Dispatched" value={fmt(counts.DISPATCHED ?? 0)} color="#F59E0B" />
-        <KPITile icon={CheckCircle2} label="Restored" value={fmt(counts.RESTORED ?? 0)} color="#02C9A8" />
+        <KPITile icon={AlertTriangle} label="Active" value={fmt(activeCount)} color="#E94B4B" />
+        <KPITile icon={Clock} label="Dispatched" value={fmt(dispatchedCount)} color="#F59E0B" />
+        <KPITile icon={CheckCircle2} label="Restored" value={fmt(restoredCount)} color="#02C9A8" />
         <KPITile icon={Activity} label="Meters affected" value={fmt(counts.affected ?? 0)} color="#56CCF2" />
       </div>
 
@@ -160,10 +181,10 @@ export default function OutageManagement() {
           className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white outline-none text-sm"
         >
           <option value="">All status</option>
-          <option value="DETECTED">Detected</option>
-          <option value="INVESTIGATING">Investigating</option>
-          <option value="DISPATCHED">Dispatched</option>
-          <option value="RESTORED">Restored</option>
+          <option value="OPENED">Opened</option>
+          <option value="ACKNOWLEDGED">Acknowledged</option>
+          <option value="RESTORING">Restoring</option>
+          <option value="CLOSED">Closed</option>
         </select>
         <span className="ml-auto text-white/40 text-sm">{incidents.length} incidents</span>
       </div>
